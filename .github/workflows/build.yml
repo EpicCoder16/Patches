@@ -1,12 +1,10 @@
-name: Build Installers
+name: Build
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   release:
-    types:
-      - published
+    types: [published]
 
 jobs:
   build:
@@ -15,38 +13,38 @@ jobs:
         include:
           - os: macos-latest
             build_cmd: npm run build:mac
-            artifact_glob: dist/*.dmg
+            artifact: dist/*.dmg
           - os: windows-latest
             build_cmd: npm run build:win
-            artifact_glob: dist/*.exe
-          - os: ubuntu-latest
-            build_cmd: npm run build:linux
-            artifact_glob: dist/*.AppImage
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+            artifact: dist/*.exe
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: 22
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build
         run: ${{ matrix.build_cmd }}
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.os }}-artifacts
-          path: ${{ matrix.artifact_glob }}
-
-      - name: Upload assets to release
-        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: gh release upload "${{ github.event.release.tag_name }}" ${{ matrix.artifact_glob }} --clobber
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-build
+          path: ${{ matrix.artifact }}
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
