@@ -1,0 +1,52 @@
+name: Build Installers
+
+on:
+  push:
+    branches:
+      - main
+  release:
+    types:
+      - published
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            build_cmd: npm run build:mac
+            artifact_glob: dist/*.dmg
+          - os: windows-latest
+            build_cmd: npm run build:win
+            artifact_glob: dist/*.exe
+          - os: ubuntu-latest
+            build_cmd: npm run build:linux
+            artifact_glob: dist/*.AppImage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: ${{ matrix.build_cmd }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-artifacts
+          path: ${{ matrix.artifact_glob }}
+
+      - name: Upload assets to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" ${{ matrix.artifact_glob }} --clobber

@@ -1,0 +1,150 @@
+{
+  "news.ycombinator.com": [
+    {
+      "prompt": "make it dark mode",
+      "css": "body {\n    background-color: #1a1a1a !important;\n    color: #e0e0e0 !important;\n}\n\n#hnmain {",
+      "createdAt": 1774153643488
+    },
+    {
+      "prompt": "dark mode",
+      "css": "html, body {\n    background-color: #1a1a1a !important;\n    color: #e0e0e0 !important;\n}\n\n#hnmain {\n    background-color: #1a1a1a !important;\n}\n\n#hnmain > tbody > tr > td[bgcolor=\"#ff6600\"] {\n    background-color: #ff6600 !important; /* Keep original orange for top bar */\n}\n\n.pagetop,\n.pagetop a,\n.hnname a {\n    color: #e0e0e0 !important;\n}\n\na {\n    color: #8ab4f8 !important;\n}\n\n.titleline a {\n    color: #e0e0e0 !important;\n}\n\n.sitestr {\n    color: #a0a0a0 !important;\n}\n\n.rank,\n.score,\n.age,\n.subtext,\n.subtext a,\n.hnuser {\n    color: #a0a0a0 !important;\n}\n\n.votelinks",
+      "createdAt": 1774153737430
+    },
+    {
+      "prompt": "highlight the bolded text",
+      "css": "center > table#hnmain > tbody > tr > td > table > tbody > tr > td > span.pagetop > b.hnname {\n  background-color: yellow !important;\n}",
+      "createdAt": 1774154247293
+    }
+  ],
+  "youtube.com": [
+    {
+      "prompt": "hide sidebar",
+      "css": "ytd-mini-guide-renderer, ytd-guide-renderer, #guide, #guide-wrapper { display: none !important; }",
+      "aspects": [
+        {
+          "id": "0",
+          "label": "Hide sidebar",
+          "css": "ytd-mini-guide-renderer, ytd-guide-renderer, #guide, #guide-wrapper { display: none !important; }",
+          "enabled": true
+        }
+      ],
+      "createdAt": 1776136939002
+    },
+    {
+      "prompt": "larger font",
+      "css": "html { font-size: 108% !important; }",
+      "aspects": [
+        {
+          "id": "0",
+          "label": "Larger Font",
+          "css": "html { font-size: 108% !important; }",
+          "enabled": true
+        }
+      ],
+      "createdAt": 1776137015357
+    },
+    {
+      "prompt": "hide images",
+      "css": "img, yt-img-shadow, ytd-thumbnail, .yt-core-image, .yt-core-image--content, yt-icon, svg { display: none !important; } [style*=\"background-image\"] { background-image: none !important; }",
+      "aspects": [
+        {
+          "id": "0",
+          "label": "Hide images",
+          "css": "img, yt-img-shadow, ytd-thumbnail, .yt-core-image, .yt-core-image--content, yt-icon, svg { display: none !important; } [style*=\"background-image\"] { background-image: none !important; }",
+          "enabled": false
+        }
+      ],
+      "createdAt": 1776137027873
+    },
+    {
+      "prompt": "remove ads",
+      "css": "ytd-promoted-sparkles-web-renderer, ytd-compact-promoted-video-renderer, ytd-display-ad-renderer, ytd-ad-slot-renderer, ytd-engagement-panel-section-list-renderer[target-id=\"engagement-panel-ads\"], ytd-player-legacy-desktop-watch-ads-renderer, ytd-action-companion-ad-renderer, ytd-banner-promo-renderer, ytd-in-feed-ad-layout-renderer, .ytd-carousel-ad-renderer, .ytd-video-masthead-ad-v3-renderer, .ytd-ad-slot-renderer { display: none !important; }",
+      "aspects": [
+        {
+          "id": "0",
+          "label": "Remove Ads",
+          "css": "ytd-promoted-sparkles-web-renderer, ytd-compact-promoted-video-renderer, ytd-display-ad-renderer, ytd-ad-slot-renderer, ytd-engagement-panel-section-list-renderer[target-id=\"engagement-panel-ads\"], ytd-player-legacy-desktop-watch-ads-renderer, ytd-action-companion-ad-renderer, ytd-banner-promo-renderer, ytd-in-feed-ad-layout-renderer, .ytd-carousel-ad-renderer, .ytd-video-masthead-ad-v3-renderer, .ytd-ad-slot-renderer { display: none !important; }",
+          "enabled": true
+        }
+      ],
+      "createdAt": 1776137038830
+    }
+  ],
+  "panerabread.com": [
+    {
+      "prompt": "remove all the bright colors",
+      "css": "html {\n  filter: grayscale(100%) !important;\n  -webkit-filter: grayscale(100%) !important;\n}\n\n* {\n  color: #",
+      "createdAt": 1774225019459
+    },
+    {
+      "prompt": "move the header to the side",
+      "css": "header.cmp-header {\n    position: fixed !important;\n    top: 0 !important;\n    left: 0 !important;\n    width: 250px !important;\n    height: 100vh !important;\n    background-color: #ffffff !important;\n    z-index: 1000 !important;\n    overflow-y: auto !important;\n}",
+      "createdAt": 1774225111450
+    }
+  ],
+  "tacobell.com": [
+    {
+      "prompt": "display deals in a sidebar on the left side of the page",
+      "css": "#___next {\n  display: flex !important;\n  flex-direction: row !important;\n  align-items: flex-start !important;\n}\n\n/*",
+      "createdAt": 1774226784841
+    },
+    {
+      "prompt": "light mode and hide footer",
+      "css": "body {\n  background-color: #ffffff !important;\n  color: #000000 !important;\n}\n\ndiv#__next {\n  background-color: #ffffff !important;\n  color: #000000 !important;\n}",
+      "createdAt": 1774226926206
+    }
+  ],
+  "hackclub.com": [
+    {
+      "prompt": "dark mode",
+      "css": "html {\n  background-color: #1a1a1a !important;\n  color: #f0f0f0 !important;\n}\n\nbody {\n  background-",
+      "createdAt": 1774661055256
+    },
+    {
+      "prompt": "make text white",
+      "css": "body {\n  color: white !important;\n}",
+      "createdAt": 1774661075695
+    },
+    {
+      "prompt": "hide images",
+      "css": "img {\n  display: none !important;\n}",
+      "createdAt": 1774661097467
+    },
+    {
+      "prompt": "larger font",
+      "css": "body {\n  font-size: 1.2em !important;\n}",
+      "createdAt": 1774661111284
+    }
+  ],
+  "code4cause.org": [
+    {
+      "prompt": "hide footer",
+      "css": "footer {\n    display: none !important;\n}",
+      "createdAt": 1774663858309
+    },
+    {
+      "prompt": "make it dark mode",
+      "css": "html, body {\n    background-color: #1a1a1a !important;\n    color: #e0e0e0 !important;\n}\n\nnav.z",
+      "createdAt": 1774663984139
+    },
+    {
+      "prompt": "larger font",
+      "css": "p.text-xl.text-gray-600.mb-10.font-semibold {\n  font-size: 1.5rem !important;\n}\n\ndiv",
+      "createdAt": 1774664031590
+    },
+    {
+      "prompt": "shift blues toward red",
+      "css": "html {\n  filter: hue-rotate(-120deg) saturate(1.05) !important;\n}",
+      "aspects": [
+        {
+          "id": "0",
+          "label": "Style",
+          "css": "html {\n  filter: hue-rotate(-120deg) saturate(1.05) !important;\n}",
+          "enabled": true
+        }
+      ],
+      "enabled": true,
+      "createdAt": 1774666700840
+    }
+  ]
+}

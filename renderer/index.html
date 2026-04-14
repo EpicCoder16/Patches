@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Patches</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- ── Navigation Bar ──────────────────────────────────────────────────── -->
+  <div id="navbar">
+    <div id="nav-controls">
+      <button class="nav-btn" id="btn-back" title="Back">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="nav-btn" id="btn-forward" title="Forward">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 2l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="nav-btn" id="btn-reload" title="Reload">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M12 2.5A5.5 5.5 0 1 1 6.5 1M12 2.5V6M12 2.5H8.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+
+    <div id="url-bar-wrapper">
+      <div id="url-security-icon">
+        <svg width="10" height="12" viewBox="0 0 10 12" fill="none"><rect x="1" y="5" width="8" height="6.5" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M3 5V3.5a2 2 0 1 1 4 0V5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </div>
+      <input type="text" id="url-input" placeholder="Search or enter URL…" spellcheck="false" autocomplete="off" />
+    </div>
+
+    <div id="nav-actions">
+      <button class="nav-btn pill-btn" id="btn-open-bar" title="Describe a new change with AI (⌘K)">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="5" cy="5" r="3.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 8l2.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <span>New patch</span>
+        <kbd>⌘K</kbd>
+      </button>
+      <button class="nav-btn pill-btn pill-btn-muted" id="btn-patches-panel" title="Saved patches for this site — reset, toggles (⌘⇧P)">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1.5" y="2.5" width="11" height="9" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M4.5 5.5h5M4.5 7.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <span>Saved</span>
+        <kbd>⌘⇧P</kbd>
+      </button>
+      <div id="toggle-wrap" title="Toggle patches on/off">
+        <input type="checkbox" id="patch-toggle" checked />
+        <label for="patch-toggle"></label>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Command Bar Overlay ──────────────────────────────────────────────── -->
+  <div id="cmd-overlay" class="hidden" aria-modal="true" role="dialog">
+    <div id="cmd-backdrop"></div>
+    <div id="cmd-container">
+      <div id="cmd-bar">
+        <div id="cmd-icon">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8h3.5l2-5 2 10 2-5H14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <input
+          type="text"
+          id="cmd-input"
+          placeholder='Describe a change… "hide sidebar", "dark mode", "remove ads"'
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div id="cmd-meta">
+          <span id="cmd-model-badge" title="Active model"></span>
+          <span id="cmd-domain-badge"></span>
+          <button id="cmd-submit">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="cmd-status" class="hidden"></div>
+      <div id="cmd-hints">
+        <span class="hint">"hide sidebar"</span>
+        <span class="hint">"dark mode"</span>
+        <span class="hint">"remove ads"</span>
+        <span class="hint">"larger font"</span>
+        <span class="hint">"hide images"</span>
+        <span class="hint">"hide footer"</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Patches Panel ────────────────────────────────────────────────────── -->
+  <div id="patches-panel" class="hidden">
+    <div id="panel-header">
+      <div id="panel-title-row">
+        <h2>Active Patches</h2>
+        <span id="panel-domain"></span>
+        <button type="button" id="panel-reset-site" class="panel-reset-btn" title="Remove all patches for this site">
+          Reset site
+        </button>
+      </div>
+      <button id="panel-close">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div id="patches-list"></div>
+    <div id="patches-empty" class="hidden">
+      <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="12" stroke="currentColor" stroke-width="1.5" opacity=".3"/><path d="M16 11v6M16 20v1" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".5"/></svg>
+      <p>No patches for this domain yet.</p>
+      <p class="hint-text">Press <kbd>⌘K</kbd> to create one.</p>
+    </div>
+  </div>
+
+  <!-- ── Toast ────────────────────────────────────────────────────────────── -->
+  <div id="toast-container"></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
