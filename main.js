@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut, dialog, shell } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut, shell } = require('electron');
 const path = require('path');
 const fs   = require('fs');
 
@@ -56,6 +56,7 @@ const GEMINI_URL     = (model) =>
 
 let mainWindow   = null;
 let browserView  = null;
+let settingsWindow = null;
 let currentURL   = 'https://www.youtube.com/';
 let patchesEnabled = true;
 let commandOverlayOpen = false;
@@ -105,6 +106,49 @@ async function removeAllInjectedCSS() {
   await browserView.webContents.executeJavaScript(`
     document.querySelectorAll('style[id^="patches-"]').forEach(el => el.remove());
   `).catch(() => {});
+}
+
+function openSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
+    return settingsWindow;
+  }
+
+  settingsWindow = new BrowserWindow({
+    width: 480,
+    height: 320,
+    minWidth: 480,
+    minHeight: 320,
+    maxWidth: 480,
+    maxHeight: 320,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    show: false,
+    frame: false,
+    backgroundColor: '#0a0a0f',
+    title: 'Patches Settings',
+    webPreferences: {
+      preload: path.join(__dirname, 'settingsPreload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  settingsWindow.setMenuBarVisibility(false);
+  settingsWindow.center();
+  settingsWindow.loadFile(path.join(__dirname, 'renderer', 'settings.html'));
+  settingsWindow.once('ready-to-show', () => {
+    settingsWindow.show();
+    settingsWindow.focus();
+  });
+  settingsWindow.on('closed', () => {
+    settingsWindow = null;
+  });
+
+  return settingsWindow;
 }
 
 function normalisePatch(patch) {
@@ -349,6 +393,7 @@ function layoutBrowserView() {
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280, height: 900, minWidth: 800, minHeight: 600,
+    show: false,
     backgroundColor: '#0a0a0f',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 14 },
@@ -360,28 +405,11 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  mainWindow.once('ready-to-show', () => { mainWindow.show(); createBrowserView(); });
-  mainWindow.on('resize', layoutBrowserView);
-}
-
-async function showMissingApiKeyDialog() {
-  const envPath = getPreferredEnvPath();
-  const envDir = path.dirname(envPath);
-  await dialog.showMessageBox({
-    type: 'warning',
-    title: 'GEMINI_API_KEY missing',
-    message: 'Patches needs a GEMINI_API_KEY to generate CSS patches.',
-    detail: [
-      'Create a .env file with this line:',
-      'GEMINI_API_KEY=your_api_key_here',
-      '',
-      `Place it at: ${envPath}`
-    ].join('\n'),
-    buttons: ['Open Folder', 'OK'],
-    defaultId: 0,
-    cancelId: 1,
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    createBrowserView();
   });
-  await shell.openPath(envDir);
+  mainWindow.on('resize', layoutBrowserView);
 }
 
 // ── IPC ───────────────────────────────────────────────────────────────────────
@@ -534,13 +562,39 @@ ipcMain.handle('toggle-patches', async (_, { enabled }) => {
   return patchesEnabled;
 });
 
+ipcMain.handle('open-settings', () => {
+  openSettingsWindow();
+  return { success: true };
+});
+
+ipcMain.handle('open-external', async (_, { url }) => {
+  if (!url || typeof url !== 'string') return { success: false };
+  await shell.openExternal(url);
+  return { success: true };
+});
+
+ipcMain.handle('save-api-key', async (_, { key }) => {
+  const value = String(key || '').trim();
+  if (!value) return { success: false, error: 'API key is required.' };
+  if (!value.startsWith('AIza')) return { success: false, error: 'Gemini API key should start with AIza.' };
+
+  const envPath = path.join(app.getPath('userData'), '.env');
+  fs.mkdirSync(path.dirname(envPath), { recursive: true });
+  fs.writeFileSync(envPath, `GEMINI_API_KEY=${value}\n`, 'utf-8');
+  app.relaunch();
+  app.exit(0);
+  return { success: true };
+});
+
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   loadDotEnv();
   GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-
+  if (!GEMINI_API_KEY) {
+    openSettingsWindow();
+    return;
+  }
   createWindow();
-  if (!GEMINI_API_KEY) showMissingApiKeyDialog().catch(() => {});
 
   // Global shortcut fires even when BrowserView has focus
   globalShortcut.register('CommandOrControl+K', () => {
@@ -549,8 +603,18 @@ app.whenReady().then(() => {
   globalShortcut.register('CommandOrControl+Shift+P', () => {
     if (mainWindow) mainWindow.webContents.send('toggle-patches-panel');
   });
+  globalShortcut.register('CommandOrControl+,', () => {
+    openSettingsWindow();
+  });
 
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length > 0) return;
+    if (!GEMINI_API_KEY) {
+      openSettingsWindow();
+      return;
+    }
+    createWindow();
+  });
 });
 
 app.on('will-quit',        () => globalShortcut.unregisterAll());

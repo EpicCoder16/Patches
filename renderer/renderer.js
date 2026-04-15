@@ -7,6 +7,7 @@ const btnForward      = document.getElementById('btn-forward');
 const btnReload       = document.getElementById('btn-reload');
 const btnOpenBar      = document.getElementById('btn-open-bar');
 const btnPatchesPanel = document.getElementById('btn-patches-panel');
+const btnSettings     = document.getElementById('btn-settings');
 const patchToggle     = document.getElementById('patch-toggle');
 
 const cmdOverlay      = document.getElementById('cmd-overlay');
@@ -77,6 +78,7 @@ btnForward.addEventListener('click', () => window.patches.goForward());
 btnReload.addEventListener('click',  () => window.patches.reload());
 btnOpenBar.addEventListener('click', () => openCommandBar());
 btnPatchesPanel.addEventListener('click', () => togglePatchesPanel());
+btnSettings.addEventListener('click', () => window.patches.openSettings());
 
 patchToggle.addEventListener('change', async () => {
   await window.patches.togglePatches({ enabled: patchToggle.checked });
@@ -274,6 +276,10 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'P') {
     e.preventDefault();
     togglePatchesPanel();
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+    e.preventDefault();
+    window.patches.openSettings();
   }
   if (e.key === 'Escape' && cmdBarOpen) closeCommandBar();
 });

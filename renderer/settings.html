@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Patches Settings</title>
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <main id="settings-root">
+    <div id="logo">P</div>
+    <h1>Enter your Gemini API Key</h1>
+    <button id="key-link" type="button">Get a free key at aistudio.google.com/apikey</button>
+
+    <form id="key-form" novalidate>
+      <div id="input-row">
+        <input
+          id="api-key-input"
+          type="password"
+          placeholder="AIza..."
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="Gemini API key"
+        />
+        <button id="toggle-visibility" type="button" aria-label="Show or hide API key">Show</button>
+      </div>
+      <p id="error-text" class="hidden"></p>
+      <button id="save-btn" type="submit">Save &amp; Launch</button>
+    </form>
+
+    <p id="footnote">Your key is stored locally on your device</p>
+  </main>
+  <script src="settings.js"></script>
+</body>
+</html>

@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('patches', {
   resetDomainPatches: ()     => ipcRenderer.invoke('reset-domain-patches'),
   setPatchAspectEnabled: (opts) => ipcRenderer.invoke('set-patch-aspect-enabled', opts),
   togglePatches:      (opts) => ipcRenderer.invoke('toggle-patches', opts),
+  openSettings:       ()     => ipcRenderer.invoke('open-settings'),
 
   onURLChanged:         (cb) => ipcRenderer.on('url-changed',         (_, v) => cb(v)),
   onTitleChanged:       (cb) => ipcRenderer.on('title-changed',        (_, v) => cb(v)),
