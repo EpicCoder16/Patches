@@ -44,6 +44,16 @@ function loadDotEnv() {
   return null;
 }
 
+function isGeminiCapacityError(status, msg) {
+  return (
+    status === 429 ||
+    status === 503 ||
+    /exceeded your current quota|quota exceeded|high demand|currently overloaded|resource_exhausted|rate.?limit|free_tier|too many requests|try again later|temporarily unavailable/i.test(
+      String(msg || '')
+    )
+  );
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 const NAV_BAR_HEIGHT     = 48;
 // Must match #patches-panel width in renderer/style.css
@@ -339,11 +349,7 @@ async function generateCSSFromPrompt(prompt, rawHTML, domain) {
   if (!res.ok) {
     const msg = data?.error?.message || res.statusText;
     const err = new Error(`Gemini ${res.status}: ${msg}`);
-    const quotaHit =
-      res.status === 429 ||
-      /exceeded your current quota|quota exceeded|rate.?limit|RESOURCE_EXHAUSTED|free_tier|too many requests/i.test(
-        String(msg)
-      );
+    const quotaHit = isGeminiCapacityError(res.status, msg);
     if (quotaHit) {
       err.geminiQuota = true;
       err.geminiErrorDetail = msg;
@@ -590,6 +596,15 @@ ipcMain.handle('open-external', async (_, { url }) => {
   if (!url || typeof url !== 'string') return { success: false };
   await shell.openExternal(url);
   return { success: true };
+});
+
+ipcMain.handle('get-api-key-status', () => {
+  const key = String(process.env.GEMINI_API_KEY || '').trim();
+  const hasKey = key.length > 0;
+  const maskedKey = hasKey && key.length > 8
+    ? `${key.slice(0, 4)}...${key.slice(-4)}`
+    : hasKey ? key : '';
+  return { hasKey, key, maskedKey };
 });
 
 ipcMain.handle('save-api-key', async (_, { key }) => {

@@ -33,6 +33,7 @@ let cmdBarOpen       = false;
 let patchesPanelOpen = false;
 let isLoading        = false;
 let currentURL       = '';
+const queuedPrompts  = [];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function getDomain(url) {
@@ -53,6 +54,16 @@ function showToast(message, type = 'success') {
 
 function escapeHTML(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isLikelyHighDemand(errorText) {
+  return /high demand|rate.?limit|resource_exhausted|too many requests|try again later|quota exceeded/i.test(
+    String(errorText || '')
+  );
 }
 
 // ── URL bar ───────────────────────────────────────────────────────────────────
@@ -179,7 +190,14 @@ function setStatusGeminiQuota(summary, detail) {
 // ── Submit patch ──────────────────────────────────────────────────────────────
 async function submitPatch() {
   const prompt = cmdInput.value.trim();
-  if (!prompt || isLoading) return;
+  if (!prompt) return;
+  if (isLoading) {
+    queuedPrompts.push(prompt);
+    cmdInput.value = '';
+    setStatusLoading(`Generating CSS patch… (${queuedPrompts.length} queued)`);
+    showToast(`Queued patch (${queuedPrompts.length})`);
+    return;
+  }
 
   isLoading = true;
   cmdInput.disabled = true;
@@ -187,17 +205,46 @@ async function submitPatch() {
   setStatusLoading('Generating CSS patch…');
 
   try {
-    const result = await window.patches.applyPatch({ prompt });
-    if (result.success) {
-      setStatusSuccess(prompt, result.css);
-      cmdInput.value = '';
-      showToast(`Patch applied on ${result.domain}`);
-      if (patchesPanelOpen) await refreshPatchesPanel();
-      setTimeout(() => closeCommandBar(), 1600);
-    } else if (result.geminiQuota) {
-      setStatusGeminiQuota(result.error, result.errorDetail);
+    cmdInput.value = '';
+    let lastResult = null;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const result = await window.patches.applyPatch({ prompt });
+      lastResult = result;
+
+      if (result.success) {
+        setStatusSuccess(prompt, result.css);
+        showToast(`Patch applied on ${result.domain}`);
+        if (patchesPanelOpen) await refreshPatchesPanel();
+        setTimeout(() => closeCommandBar(), 1600);
+        return;
+      }
+
+      if (
+        result.geminiQuota &&
+        isLikelyHighDemand(result.errorDetail || result.error) &&
+        attempt < 3
+      ) {
+        const delayMs = attempt === 1 ? 1500 : 3000;
+        setStatusLoading(
+          `Model is in high demand. Retrying in ${Math.round(delayMs / 1000)}s… (${attempt}/3)`
+        );
+        await sleep(delayMs);
+        continue;
+      }
+
+      break;
+    }
+
+    if (lastResult?.geminiQuota) {
+      setStatusGeminiQuota(lastResult.error, lastResult.errorDetail);
+    } else if (isLikelyHighDemand(lastResult?.errorDetail || lastResult?.error)) {
+      setStatusGeminiQuota(
+        'Model is experiencing high demand. You can wait and retry, or switch to a lighter model in Settings.',
+        lastResult?.errorDetail || lastResult?.error
+      );
     } else {
-      setStatusError(result.error || 'Something went wrong.');
+      setStatusError(lastResult?.error || 'Something went wrong.');
     }
   } catch (err) {
     setStatusError(err.message || 'Unexpected error.');
@@ -205,6 +252,14 @@ async function submitPatch() {
     isLoading = false;
     cmdInput.disabled = false;
     cmdSubmit.disabled = false;
+
+    if (queuedPrompts.length > 0) {
+      const nextPrompt = queuedPrompts.shift();
+      cmdInput.value = nextPrompt;
+      setTimeout(() => submitPatch(), 80);
+      return;
+    }
+
     if (cmdBarOpen) cmdInput.focus();
   }
 }

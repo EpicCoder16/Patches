@@ -6,6 +6,7 @@ const keyLink = document.getElementById('key-link');
 const toggleBtn = document.getElementById('toggle-visibility');
 const saveBtn = document.getElementById('save-btn');
 const errorText = document.getElementById('error-text');
+const keyStatus = document.getElementById('key-status');
 
 function showError(message) {
   errorText.textContent = message;
@@ -55,4 +56,22 @@ keyInput.addEventListener('input', () => {
   if (!errorText.classList.contains('hidden')) clearError();
 });
 
-setTimeout(() => keyInput.focus(), 20);
+async function initKeyStatus() {
+  const state = await window.settingsAPI.getApiKeyStatus();
+  if (state && state.hasKey) {
+    keyStatus.textContent = `Current key detected: ${state.maskedKey}`;
+    keyInput.value = state.key || '';
+    saveBtn.textContent = 'Save & Relaunch';
+    toggleBtn.textContent = 'Hide';
+    keyInput.type = 'text';
+  } else {
+    keyStatus.textContent = 'No API key saved yet.';
+    saveBtn.textContent = 'Save & Launch';
+  }
+  setTimeout(() => keyInput.focus(), 20);
+}
+
+initKeyStatus().catch(() => {
+  keyStatus.textContent = 'Unable to read key status.';
+  setTimeout(() => keyInput.focus(), 20);
+});
