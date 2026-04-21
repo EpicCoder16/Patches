@@ -338,7 +338,17 @@ async function generateCSSFromPrompt(prompt, rawHTML, domain) {
 
   if (!res.ok) {
     const msg = data?.error?.message || res.statusText;
-    throw new Error(`Gemini ${res.status}: ${msg}`);
+    const err = new Error(`Gemini ${res.status}: ${msg}`);
+    const quotaHit =
+      res.status === 429 ||
+      /exceeded your current quota|quota exceeded|rate.?limit|RESOURCE_EXHAUSTED|free_tier|too many requests/i.test(
+        String(msg)
+      );
+    if (quotaHit) {
+      err.geminiQuota = true;
+      err.geminiErrorDetail = msg;
+    }
+    throw err;
   }
 
   const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -503,6 +513,15 @@ ipcMain.handle('apply-patch', async (_, { prompt }) => {
     await injectCSS(css, `patches-${idx}`);
     return { success: true, css, domain, aspects };
   } catch (err) {
+    if (err.geminiQuota) {
+      return {
+        success: false,
+        geminiQuota: true,
+        error:
+          'Gemini quota or rate limit reached. Use your own API key, try another model, or wait and retry.',
+        errorDetail: err.geminiErrorDetail || err.message,
+      };
+    }
     return { success: false, error: err.message };
   }
 });

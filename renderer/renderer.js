@@ -152,6 +152,30 @@ function setStatusError(msg) {
     <span>${escapeHTML(msg)}</span>`;
 }
 
+function setStatusGeminiQuota(summary, detail) {
+  const det = String(detail || '').trim();
+  const detShort = det.length > 900 ? `${det.slice(0, 900)}…` : det;
+  cmdStatus.className = 'error quota';
+  cmdStatus.innerHTML = `
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" class="cmd-status-icon"><path d="M7 2v5.5M7 9.5v1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <div class="cmd-status-quota-wrap">
+      <div class="cmd-status-quota-text">
+        <strong class="cmd-status-quota-title">Gemini quota or rate limit</strong>
+        <p class="cmd-status-quota-body">${escapeHTML(summary || 'Your API key hit a quota or rate limit.')}</p>
+        <div class="cmd-status-quota-actions">
+          <button type="button" class="cmd-status-open-settings">Open Settings</button>
+        </div>
+      </div>
+      ${detShort ? `<details class="cmd-status-details"><summary>Technical details</summary><pre class="cmd-status-details-pre">${escapeHTML(detShort)}</pre></details>` : ''}
+    </div>`;
+  const openBtn = cmdStatus.querySelector('.cmd-status-open-settings');
+  if (openBtn) {
+    openBtn.addEventListener('click', () => {
+      window.patches.openSettings();
+    });
+  }
+}
+
 // ── Submit patch ──────────────────────────────────────────────────────────────
 async function submitPatch() {
   const prompt = cmdInput.value.trim();
@@ -170,6 +194,8 @@ async function submitPatch() {
       showToast(`Patch applied on ${result.domain}`);
       if (patchesPanelOpen) await refreshPatchesPanel();
       setTimeout(() => closeCommandBar(), 1600);
+    } else if (result.geminiQuota) {
+      setStatusGeminiQuota(result.error, result.errorDetail);
     } else {
       setStatusError(result.error || 'Something went wrong.');
     }
