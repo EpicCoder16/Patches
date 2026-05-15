@@ -20,16 +20,17 @@ npm start
 
 ### Choose a model (optional)
 
-Default: `gemini-2.0-flash`
+Default: `gemini-2.5-flash`. Older `gemini-1.5-*` IDs often return 404 on current `v1beta`; use the list below or call the API [ListModels](https://ai.google.dev/api/rest/v1beta/models/list) for your key.
 
 ```bash
 export PATCHES_MODEL="gemini-2.0-flash-lite"
 ```
 
-Other options:
+Supported in the app:
+- `gemini-2.5-flash`
+- `gemini-2.5-pro`
+- `gemini-2.0-flash`
 - `gemini-2.0-flash-lite`
-- `gemini-1.5-flash`
-- `gemini-1.5-flash-8b`
 
 ## Usage
 
@@ -82,7 +83,7 @@ npm run build
 
 ### End-user API key setup
 
-`.env` is intentionally excluded from installers. Beta users must create it manually.
+`.env` is intentionally excluded from installers. Beta users add a key in **Settings** (recommended) or create `.env` manually. Without a key, the browser and **saved** patches still work; only **New patch** (AI generation) needs a key.
 
 - macOS packaged app: create `.env` at `Patches.app/Contents/.env`
 - Windows packaged app: create `.env` in the same folder as `Patches.exe`
@@ -94,7 +95,7 @@ Required content:
 GEMINI_API_KEY=your_api_key_here
 ```
 
-If no key is found on launch, Patches shows a native dialog with the exact path and opens the destination folder automatically.
+If no key is found on launch, Patches opens **Settings** (always-on-top) and the main window. You can browse and use saved patches; add a key to enable AI patch generation.
 
 ### Unsigned beta builds
 

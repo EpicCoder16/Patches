@@ -15,7 +15,7 @@ const cmdInput        = document.getElementById('cmd-input');
 const cmdSubmit       = document.getElementById('cmd-submit');
 const cmdStatus       = document.getElementById('cmd-status');
 const cmdDomainBadge  = document.getElementById('cmd-domain-badge');
-const cmdModelBadge   = document.getElementById('cmd-model-badge');
+const cmdModelSelect  = document.getElementById('cmd-model-select');
 const cmdHints        = document.getElementById('cmd-hints');
 const cmdBackdrop     = document.getElementById('cmd-backdrop');
 
@@ -27,6 +27,8 @@ const panelResetSite  = document.getElementById('panel-reset-site');
 const panelClose      = document.getElementById('panel-close');
 
 const toastContainer  = document.getElementById('toast-container');
+const navApiHint      = document.getElementById('nav-api-hint');
+const navApiHintBtn   = document.getElementById('nav-api-hint-settings');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let cmdBarOpen       = false;
@@ -34,6 +36,7 @@ let patchesPanelOpen = false;
 let isLoading        = false;
 let currentURL       = '';
 const queuedPrompts  = [];
+let availableModels  = [];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function getDomain(url) {
@@ -94,6 +97,17 @@ btnSettings.addEventListener('click', () => window.patches.openSettings());
 patchToggle.addEventListener('change', async () => {
   await window.patches.togglePatches({ enabled: patchToggle.checked });
   showToast(patchToggle.checked ? 'Patches enabled' : 'Patches disabled');
+});
+
+cmdModelSelect.addEventListener('change', async () => {
+  const model = cmdModelSelect.value;
+  const result = await window.patches.setModel(model);
+  if (!result || !result.success) {
+    showToast((result && result.error) || 'Failed to switch model', 'error');
+    return;
+  }
+  cmdModelSelect.title = model;
+  showToast(`Model switched to ${model}`);
 });
 
 // ── Command bar ───────────────────────────────────────────────────────────────
@@ -163,6 +177,27 @@ function setStatusError(msg) {
     <span>${escapeHTML(msg)}</span>`;
 }
 
+function setStatusNeedsApiKey() {
+  cmdStatus.className = 'error quota';
+  cmdStatus.innerHTML = `
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" class="cmd-status-icon"><path d="M7 2v5.5M7 9.5v1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <div class="cmd-status-quota-wrap">
+      <div class="cmd-status-quota-text">
+        <strong class="cmd-status-quota-title">Gemini API key required</strong>
+        <p class="cmd-status-quota-body">Add your free key in Settings to generate patches with AI. Saved patches for this site still apply without a key.</p>
+        <div class="cmd-status-quota-actions">
+          <button type="button" class="cmd-status-open-settings">Open Settings</button>
+        </div>
+      </div>
+    </div>`;
+  const openBtn = cmdStatus.querySelector('.cmd-status-open-settings');
+  if (openBtn) {
+    openBtn.addEventListener('click', () => {
+      window.patches.openSettings();
+    });
+  }
+}
+
 function setStatusGeminiQuota(summary, detail) {
   const det = String(detail || '').trim();
   const detShort = det.length > 900 ? `${det.slice(0, 900)}…` : det;
@@ -215,9 +250,17 @@ async function submitPatch() {
       if (result.success) {
         setStatusSuccess(prompt, result.css);
         showToast(`Patch applied on ${result.domain}`);
+        if (result.fallbackUsed && result.usedModel) {
+          showToast(`High demand on selected model. Used ${result.usedModel} fallback.`);
+        }
         if (patchesPanelOpen) await refreshPatchesPanel();
         setTimeout(() => closeCommandBar(), 1600);
         return;
+      }
+
+      if (result.needsApiKey) {
+        setStatusNeedsApiKey();
+        break;
       }
 
       if (
@@ -367,14 +410,29 @@ document.addEventListener('keydown', e => {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
-  const [url, model] = await Promise.all([
+  const [url, model, supportedModels, keyState] = await Promise.all([
     window.patches.getCurrentURL(),
     window.patches.getModel(),
+    window.patches.getSupportedModels(),
+    window.patches.getApiKeyStatus(),
   ]);
   updateURLBar(url);
-  // Show the short model name (everything after the last /)
-  if (cmdModelBadge) {
-    cmdModelBadge.textContent = model;
-    cmdModelBadge.title = model;
+  if (navApiHint && keyState && !keyState.hasKey) {
+    navApiHint.classList.remove('hidden');
+  }
+  if (navApiHintBtn) {
+    navApiHintBtn.addEventListener('click', () => window.patches.openSettings());
+  }
+  availableModels = Array.isArray(supportedModels) ? supportedModels : [];
+  if (cmdModelSelect) {
+    cmdModelSelect.innerHTML = '';
+    for (const m of availableModels) {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      cmdModelSelect.appendChild(opt);
+    }
+    cmdModelSelect.value = model;
+    cmdModelSelect.title = model;
   }
 })();

@@ -7,6 +7,7 @@ const toggleBtn = document.getElementById('toggle-visibility');
 const saveBtn = document.getElementById('save-btn');
 const errorText = document.getElementById('error-text');
 const keyStatus = document.getElementById('key-status');
+const modelSelect = document.getElementById('model-select');
 
 function showError(message) {
   errorText.textContent = message;
@@ -42,6 +43,12 @@ keyForm.addEventListener('submit', async (event) => {
     return;
   }
 
+  const modelResult = await window.settingsAPI.setModel(modelSelect.value);
+  if (!modelResult || !modelResult.success) {
+    showError((modelResult && modelResult.error) || 'Unable to save model selection.');
+    return;
+  }
+
   saveBtn.disabled = true;
   saveBtn.textContent = 'Saving...';
   const result = await window.settingsAPI.saveKey(value);
@@ -58,6 +65,16 @@ keyInput.addEventListener('input', () => {
 
 async function initKeyStatus() {
   const state = await window.settingsAPI.getApiKeyStatus();
+  const models = Array.isArray(state && state.supportedModels) ? state.supportedModels : [];
+  modelSelect.innerHTML = '';
+  for (const model of models) {
+    const opt = document.createElement('option');
+    opt.value = model;
+    opt.textContent = model;
+    modelSelect.appendChild(opt);
+  }
+  if (state && state.model && models.includes(state.model)) modelSelect.value = state.model;
+
   if (state && state.hasKey) {
     keyStatus.textContent = `Current key detected: ${state.maskedKey}`;
     keyInput.value = state.key || '';

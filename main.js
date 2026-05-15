@@ -54,12 +54,52 @@ function isGeminiCapacityError(status, msg) {
   );
 }
 
+function getUserEnvPath() {
+  return path.join(app.getPath('userData'), '.env');
+}
+
+function upsertUserEnv(values) {
+  let current = {};
+  const envPath = getUserEnvPath();
+  try {
+    current = parseDotEnv(fs.readFileSync(envPath, 'utf-8'));
+  } catch {
+    current = {};
+  }
+  const next = { ...current, ...values };
+  const lines = Object.entries(next).map(([k, v]) => `${k}=${String(v)}`);
+  fs.mkdirSync(path.dirname(envPath), { recursive: true });
+  fs.writeFileSync(envPath, `${lines.join('\n')}\n`, 'utf-8');
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 const NAV_BAR_HEIGHT     = 48;
 // Must match #patches-panel width in renderer/style.css
 const PATCHES_PANEL_WIDTH = 300;
 let GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL   = process.env.PATCHES_MODEL || 'gemini-2.0-flash';
+// Default: current Gemini 2.5 Flash (v1beta). Older 1.5 IDs (e.g. gemini-1.5-flash-8b) 404 on many keys.
+let GEMINI_MODEL   = process.env.PATCHES_MODEL || 'gemini-2.5-flash';
+const SUPPORTED_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+];
+
+const GEMINI_RETRIES_PER_MODEL = 3;
+const GEMINI_RETRY_BACKOFF_MS = [700, 1800, 3500];
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isGeminiModelUnavailableError(status, msg) {
+  const m = String(msg || '');
+  return (
+    status === 404 ||
+    /not found|is not supported|not supported for generatecontent|invalid model/i.test(m)
+  );
+}
 // Gemini endpoint — model is injected into the URL, key as query param
 const GEMINI_URL     = (model) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
@@ -257,14 +297,14 @@ function parseModelAspects(raw) {
 }
 
 // ── LLM — Google Gemini ─────────────────────────────────────────────────────
-// Free tier (AI Studio key): 15 req/min, 1500 req/day on gemini-2.0-flash.
+// Free tier (AI Studio key): rate limits vary by model; Patches retries on 429/503, then tries fallbacks in SUPPORTED_MODELS.
 // Get a key at https://aistudio.google.com/apikey
 //
-// Models (set PATCHES_MODEL in .env to override):
-//   gemini-2.0-flash          — default, fast, generous free tier
-//   gemini-2.0-flash-lite     — even faster / lighter
-//   gemini-1.5-flash          — slightly slower but very capable
-//   gemini-1.5-flash-8b       — smallest / cheapest
+// Models (set PATCHES_MODEL in .env to override) — use ListModels if one 404s for your key/region:
+//   gemini-2.5-flash          — default
+//   gemini-2.5-pro            — stronger / different quota pool
+//   gemini-2.0-flash          — Gemini 2 Flash
+//   gemini-2.0-flash-lite     — Gemini 2 Flash Lite
 
 const SYSTEM_PROMPT = `You are an expert CSS engineer whose sole job is to write CSS patches for websites.
 
@@ -338,32 +378,71 @@ async function generateCSSFromPrompt(prompt, rawHTML, domain) {
     },
   };
 
-  const res = await fetch(GEMINI_URL(GEMINI_MODEL), {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(body),
-  }).catch(e => { throw new Error(`Network error: ${e.message}`); });
+  const candidates = [GEMINI_MODEL, ...SUPPORTED_MODELS.filter((m) => m !== GEMINI_MODEL)];
+  let noticeFromEarlierModel = '';
 
-  const data = await res.json().catch(() => null);
+  for (let mi = 0; mi < candidates.length; mi++) {
+    const model = candidates[mi];
+    const moreModels = mi < candidates.length - 1;
+    let exhaustedModelMsg = '';
 
-  if (!res.ok) {
-    const msg = data?.error?.message || res.statusText;
-    const err = new Error(`Gemini ${res.status}: ${msg}`);
-    const quotaHit = isGeminiCapacityError(res.status, msg);
-    if (quotaHit) {
-      err.geminiQuota = true;
-      err.geminiErrorDetail = msg;
+    for (let attempt = 0; attempt < GEMINI_RETRIES_PER_MODEL; attempt++) {
+      const res = await fetch(GEMINI_URL(model), {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      }).catch((e) => {
+        throw new Error(`Network error: ${e.message}`);
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        const msg = data?.error?.message || res.statusText;
+        const capacityError = isGeminiCapacityError(res.status, msg);
+        const modelGone = isGeminiModelUnavailableError(res.status, msg);
+        const detail = `Gemini ${res.status}: ${msg}`;
+
+        if (modelGone) {
+          exhaustedModelMsg = detail;
+          break;
+        }
+
+        if (capacityError) {
+          exhaustedModelMsg = detail;
+          if (attempt < GEMINI_RETRIES_PER_MODEL - 1) {
+            await sleepMs(GEMINI_RETRY_BACKOFF_MS[attempt] ?? 2500);
+            continue;
+          }
+          break;
+        }
+
+        const err = new Error(detail);
+        throw err;
+      }
+
+      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!raw) {
+        const reason = data?.candidates?.[0]?.finishReason || 'unknown';
+        throw new Error(`Empty response from Gemini (finishReason: ${reason}).`);
+      }
+
+      return {
+        aspects: parseModelAspects(raw),
+        usedModel: model,
+        fallbackUsed: model !== GEMINI_MODEL,
+        fallbackError: model !== GEMINI_MODEL ? noticeFromEarlierModel || null : null,
+      };
     }
-    throw err;
+
+    noticeFromEarlierModel = exhaustedModelMsg || noticeFromEarlierModel;
+    if (moreModels) await sleepMs(400);
   }
 
-  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!raw) {
-    const reason = data?.candidates?.[0]?.finishReason || 'unknown';
-    throw new Error(`Empty response from Gemini (finishReason: ${reason}).`);
-  }
-
-  return parseModelAspects(raw);
+  const err = new Error(noticeFromEarlierModel || 'Model temporarily unavailable.');
+  err.geminiQuota = true;
+  err.geminiErrorDetail = noticeFromEarlierModel || 'All configured Gemini models are currently in high demand.';
+  throw err;
 }
 // ── BrowserView ───────────────────────────────────────────────────────────────
 function createBrowserView() {
@@ -443,6 +522,17 @@ ipcMain.handle('go-forward', () => browserView.webContents.canGoForward() && bro
 ipcMain.handle('reload',     () => browserView.webContents.reload());
 ipcMain.handle('get-current-url', () => currentURL);
 ipcMain.handle('get-model',       () => GEMINI_MODEL);
+ipcMain.handle('get-supported-models', () => SUPPORTED_MODELS);
+ipcMain.handle('set-model', (_, { model }) => {
+  const next = String(model || '').trim();
+  if (!SUPPORTED_MODELS.includes(next)) {
+    return { success: false, error: 'Unsupported model.' };
+  }
+  GEMINI_MODEL = next;
+  process.env.PATCHES_MODEL = GEMINI_MODEL;
+  upsertUserEnv({ PATCHES_MODEL: GEMINI_MODEL });
+  return { success: true, model: GEMINI_MODEL };
+});
 
 // Toggle overlay: shrink BrowserView so the renderer overlay is actually visible
 ipcMain.handle('set-overlay-open', (_, { open }) => {
@@ -456,6 +546,13 @@ ipcMain.handle('set-patches-panel-open', (_, { open }) => {
 });
 
 ipcMain.handle('apply-patch', async (_, { prompt }) => {
+  if (!String(GEMINI_API_KEY || '').trim()) {
+    return {
+      success: false,
+      needsApiKey: true,
+      error: 'Add a Gemini API key in Settings to create patches with AI.',
+    };
+  }
   try {
     const rawHTML = await browserView.webContents.executeJavaScript(`
   (function(){
@@ -502,8 +599,8 @@ ipcMain.handle('apply-patch', async (_, { prompt }) => {
   })();
 `).catch(() => '');
 
-    const aspectDefs = await generateCSSFromPrompt(prompt, rawHTML, getDomain(currentURL));
-    const aspects = aspectDefs.map((a, i) => ({
+    const generated = await generateCSSFromPrompt(prompt, rawHTML, getDomain(currentURL));
+    const aspects = generated.aspects.map((a, i) => ({
       id:      String(i),
       label:   a.label,
       css:     a.css,
@@ -517,7 +614,15 @@ ipcMain.handle('apply-patch', async (_, { prompt }) => {
     patches[domain].push({ prompt, css, aspects, createdAt: Date.now() });
     savePatches(patches);
     await injectCSS(css, `patches-${idx}`);
-    return { success: true, css, domain, aspects };
+    return {
+      success: true,
+      css,
+      domain,
+      aspects,
+      usedModel: generated.usedModel,
+      fallbackUsed: generated.fallbackUsed,
+      fallbackError: generated.fallbackError,
+    };
   } catch (err) {
     if (err.geminiQuota) {
       return {
@@ -604,7 +709,7 @@ ipcMain.handle('get-api-key-status', () => {
   const maskedKey = hasKey && key.length > 8
     ? `${key.slice(0, 4)}...${key.slice(-4)}`
     : hasKey ? key : '';
-  return { hasKey, key, maskedKey };
+  return { hasKey, key, maskedKey, model: GEMINI_MODEL, supportedModels: SUPPORTED_MODELS };
 });
 
 ipcMain.handle('save-api-key', async (_, { key }) => {
@@ -612,9 +717,7 @@ ipcMain.handle('save-api-key', async (_, { key }) => {
   if (!value) return { success: false, error: 'API key is required.' };
   if (!value.startsWith('AIza')) return { success: false, error: 'Gemini API key should start with AIza.' };
 
-  const envPath = path.join(app.getPath('userData'), '.env');
-  fs.mkdirSync(path.dirname(envPath), { recursive: true });
-  fs.writeFileSync(envPath, `GEMINI_API_KEY=${value}\n`, 'utf-8');
+  upsertUserEnv({ GEMINI_API_KEY: value, PATCHES_MODEL: GEMINI_MODEL });
   app.relaunch();
   app.exit(0);
   return { success: true };
@@ -624,10 +727,13 @@ ipcMain.handle('save-api-key', async (_, { key }) => {
 app.whenReady().then(() => {
   loadDotEnv();
   GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-  if (!GEMINI_API_KEY) {
-    openSettingsWindow();
-    return;
+  GEMINI_MODEL = process.env.PATCHES_MODEL || GEMINI_MODEL;
+  if (!SUPPORTED_MODELS.includes(GEMINI_MODEL)) {
+    GEMINI_MODEL = SUPPORTED_MODELS[0];
+    process.env.PATCHES_MODEL = GEMINI_MODEL;
   }
+
+  if (!GEMINI_API_KEY) openSettingsWindow();
   createWindow();
 
   // Global shortcut fires even when BrowserView has focus
@@ -643,10 +749,7 @@ app.whenReady().then(() => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length > 0) return;
-    if (!GEMINI_API_KEY) {
-      openSettingsWindow();
-      return;
-    }
+    if (!GEMINI_API_KEY) openSettingsWindow();
     createWindow();
   });
 });
