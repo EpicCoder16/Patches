@@ -27,6 +27,7 @@
     "files": [
       "main.js",
       "firebase-sync.js",
+      "firebase-config.json",
       "preload.js",
       "settingsPreload.js",
       "renderer/**/*",

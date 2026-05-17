@@ -10,17 +10,17 @@ npm install
 
 ### Firebase (login & cloud storage)
 
-Patches requires a Firebase account before you can use the app. Patches are stored in **Cloud Firestore** per user.
+Patches uses Firebase for user authentication and syncing patches to **Cloud Firestore**. As the developer, you should set up your own central Firebase project so beta testers can seamlessly sign up inside the app.
 
 1. Create a project at [Firebase Console](https://console.firebase.google.com/).
 2. **Authentication** → Sign-in method → enable **Email/Password**.
 3. **Firestore Database** → Create database (production mode is fine).
 4. Deploy security rules from `firestore.rules` in this repo (Firebase CLI: `firebase deploy --only firestore:rules`, or paste into the Rules tab).
-5. **Project settings** → Your apps → add a **Web** app → copy the config into `.env` (see `.env.example`).
+5. **Project settings** → Your apps → add a **Web** app.
+6. Copy the configuration values into `firebase-config.json` in the root of this repository.
 
-Required `.env` keys: `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID`, `FIREBASE_APP_ID` (optional: `FIREBASE_STORAGE_BUCKET`, `FIREBASE_MESSAGING_SENDER_ID`).
-
-On launch you’ll see **Sign in** / **Sign up**. Returning users stay signed in. Use **Sign out** in the navbar to switch accounts.
+By placing your Firebase config in `firebase-config.json`, the credentials will be bundled into the packaged Electron app. Beta testers will simply see a **Sign in** / **Sign up** screen upon launching the app and will be authenticated against your central Firebase project without needing to configure their own backend. 
+(Note: You can still use `.env` for local testing if you prefer).
 
 ### Set your Gemini API key
 
