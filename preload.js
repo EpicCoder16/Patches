@@ -1,5 +1,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+contextBridge.exposeInMainWorld('authAPI', {
+  getFirebaseConfig: () => ipcRenderer.invoke('get-firebase-config'),
+  notifyAuthSuccess: (payload) => ipcRenderer.invoke('auth-established', payload),
+  notifySignOut: () => ipcRenderer.invoke('auth-signed-out'),
+  onPatchesSyncRequest: (cb) => {
+    ipcRenderer.on('sync-patches-to-cloud', (_, data) => cb(data));
+  },
+  onAuthRequired: (cb) => {
+    ipcRenderer.on('auth-required', () => cb());
+  },
+  openExternal: (url) => ipcRenderer.invoke('open-external', { url }),
+});
+
 contextBridge.exposeInMainWorld('patches', {
   navigate:           (url)  => ipcRenderer.invoke('navigate', url),
   goBack:             ()     => ipcRenderer.invoke('go-back'),
@@ -19,6 +32,9 @@ contextBridge.exposeInMainWorld('patches', {
   setPatchAspectEnabled: (opts) => ipcRenderer.invoke('set-patch-aspect-enabled', opts),
   togglePatches:      (opts) => ipcRenderer.invoke('toggle-patches', opts),
   openSettings:       ()     => ipcRenderer.invoke('open-settings'),
+  signOut:            ()     => ipcRenderer.invoke('auth-signed-out'),
+  getAuthUser:        ()     => ipcRenderer.invoke('get-auth-user'),
+  onAuthReady:        (cb)   => ipcRenderer.on('auth-ready', () => cb()),
 
   onURLChanged:         (cb) => ipcRenderer.on('url-changed',         (_, v) => cb(v)),
   onTitleChanged:       (cb) => ipcRenderer.on('title-changed',        (_, v) => cb(v)),

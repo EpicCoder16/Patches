@@ -8,6 +8,20 @@ AI-powered CSS patch injector for any website. Built with Electron + Gemini.
 npm install
 ```
 
+### Firebase (login & cloud storage)
+
+Patches requires a Firebase account before you can use the app. Patches are stored in **Cloud Firestore** per user.
+
+1. Create a project at [Firebase Console](https://console.firebase.google.com/).
+2. **Authentication** → Sign-in method → enable **Email/Password**.
+3. **Firestore Database** → Create database (production mode is fine).
+4. Deploy security rules from `firestore.rules` in this repo (Firebase CLI: `firebase deploy --only firestore:rules`, or paste into the Rules tab).
+5. **Project settings** → Your apps → add a **Web** app → copy the config into `.env` (see `.env.example`).
+
+Required `.env` keys: `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID`, `FIREBASE_APP_ID` (optional: `FIREBASE_STORAGE_BUCKET`, `FIREBASE_MESSAGING_SENDER_ID`).
+
+On launch you’ll see **Sign in** / **Sign up**. Returning users stay signed in. Use **Sign out** in the navbar to switch accounts.
+
 ### Set your Gemini API key
 
 Get a key at <https://aistudio.google.com/apikey>
@@ -33,6 +47,8 @@ Supported in the app:
 - `gemini-2.0-flash-lite`
 
 ## Usage
+
+Sign in first, then browse and patch sites.
 
 - **New patch** (navbar, ⌘K)  →  AI prompt bar in the center (what you use to *create* a patch)
 - **Saved** (navbar, ⌘⇧P)     →  Right sidebar: list, aspect checkboxes, **Reset site**, remove

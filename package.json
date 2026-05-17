@@ -26,6 +26,7 @@
     "publish": null,
     "files": [
       "main.js",
+      "firebase-sync.js",
       "preload.js",
       "settingsPreload.js",
       "renderer/**/*",
@@ -38,6 +39,10 @@
       "!node_modules/.cache/**",
       "!dist/**",
       "!build/**/*.psd",
+      "build/patcheslogorounded.png",
+      "build/icon.png",
+      "build/icon.ico",
+      "build/icon.icns",
       "!scripts/**",
       "!**/*.map",
       "!.github/**"

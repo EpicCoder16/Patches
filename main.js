@@ -1,6 +1,15 @@
 const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut, shell } = require('electron');
 const path = require('path');
 const fs   = require('fs');
+const { isFirebaseConfigured, getFirebaseWebConfig } = require('./firebase-sync');
+
+function getAppIconPath() {
+  const png = path.join(__dirname, 'build', 'icon.png');
+  const rounded = path.join(__dirname, 'build', 'patcheslogorounded.png');
+  if (fs.existsSync(png)) return png;
+  if (fs.existsSync(rounded)) return rounded;
+  return undefined;
+}
 
 function parseDotEnv(raw) {
   const out = {};
@@ -111,6 +120,10 @@ let currentURL   = 'https://www.youtube.com/';
 let patchesEnabled = true;
 let commandOverlayOpen = false;
 let patchesPanelOpen   = false;
+let isAuthenticated    = false;
+let authUser           = null;
+let patchesStore       = {};
+let patchesCloudSync   = false;
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 function getPatchesFilePath() {
@@ -118,15 +131,34 @@ function getPatchesFilePath() {
   return path.join(__dirname, 'storage', 'patches.json');
 }
 
-function loadPatches() {
+function loadPatchesFromDisk() {
   const patchesFile = getPatchesFilePath();
   try { return JSON.parse(fs.readFileSync(patchesFile, 'utf-8')); }
   catch { return {}; }
 }
-function savePatches(patches) {
+
+function writePatchesToDisk(patches) {
   const patchesFile = getPatchesFilePath();
   fs.mkdirSync(path.dirname(patchesFile), { recursive: true });
   fs.writeFileSync(patchesFile, JSON.stringify(patches, null, 2), 'utf-8');
+}
+
+function loadPatches() {
+  return patchesStore;
+}
+
+function savePatches(patches) {
+  patchesStore = patches;
+  writePatchesToDisk(patches);
+  if (patchesCloudSync && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('sync-patches-to-cloud', patches);
+  }
+}
+
+function mergePatchesPreferCloud(cloud, local) {
+  const cloudKeys = Object.keys(cloud || {});
+  if (cloudKeys.length) return cloud;
+  return local || {};
 }
 function getDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); }
@@ -180,6 +212,7 @@ function openSettingsWindow() {
     frame: false,
     backgroundColor: '#0a0a0f',
     title: 'Patches Settings',
+    icon: getAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'settingsPreload.js'),
       contextIsolation: true,
@@ -446,6 +479,7 @@ async function generateCSSFromPrompt(prompt, rawHTML, domain) {
 }
 // ── BrowserView ───────────────────────────────────────────────────────────────
 function createBrowserView() {
+  if (browserView || !mainWindow) return;
   browserView = new BrowserView({
     webPreferences: { nodeIntegration: false, contextIsolation: true, webSecurity: false },
   });
@@ -485,6 +519,20 @@ function layoutBrowserView() {
 }
 
 // ── Main window ───────────────────────────────────────────────────────────────
+function destroyBrowserView() {
+  if (!browserView || !mainWindow) return;
+  mainWindow.removeBrowserView(browserView);
+  browserView.webContents.destroy();
+  browserView = null;
+}
+
+function unlockAppAfterAuth() {
+  if (!mainWindow) return;
+  createBrowserView();
+  mainWindow.webContents.send('auth-ready');
+  if (!GEMINI_API_KEY) openSettingsWindow();
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280, height: 900, minWidth: 800, minHeight: 600,
@@ -492,23 +540,71 @@ function createWindow() {
     backgroundColor: '#0a0a0f',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 14 },
+    icon: getAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      partition: 'persist:patches-auth',
     },
   });
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    createBrowserView();
+    if (isAuthenticated) unlockAppAfterAuth();
   });
   mainWindow.on('resize', layoutBrowserView);
 }
 
+// ── IPC — Auth & Firebase ─────────────────────────────────────────────────────
+ipcMain.handle('get-firebase-config', () => ({
+  configured: isFirebaseConfigured(),
+  webConfig: getFirebaseWebConfig(),
+}));
+
+ipcMain.handle('auth-established', async (_, { uid, email, displayName, idToken, patches }) => {
+  const local = loadPatchesFromDisk();
+  const merged = mergePatchesPreferCloud(patches, local);
+  patchesStore = merged;
+  writePatchesToDisk(merged);
+
+  authUser = { uid, email: email || '', displayName: displayName || '' };
+  isAuthenticated = true;
+  patchesCloudSync = true;
+
+  const hadBrowser = Boolean(browserView);
+  if (!hadBrowser) unlockAppAfterAuth();
+  else if (browserView) await applyDomainPatches(currentURL);
+
+  const shouldUploadLocal = !Object.keys(patches || {}).length && Object.keys(local).length > 0;
+  if (shouldUploadLocal && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('sync-patches-to-cloud', merged);
+  }
+
+  return { success: true, user: authUser };
+});
+
+ipcMain.handle('auth-signed-out', async () => {
+  isAuthenticated = false;
+  authUser = null;
+  patchesCloudSync = false;
+  patchesStore = loadPatchesFromDisk();
+  destroyBrowserView();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('auth-required');
+  }
+  return { success: true };
+});
+
+ipcMain.handle('get-auth-user', () => ({
+  isAuthenticated,
+  user: authUser,
+}));
+
 // ── IPC ───────────────────────────────────────────────────────────────────────
 ipcMain.handle('navigate', async (_, url) => {
+  if (!isAuthenticated || !browserView) return currentURL;
   let target = url.trim();
   if (!target.startsWith('http://') && !target.startsWith('https://'))
     target = target.includes('.') ? `https://${target}` : `https://www.google.com/search?q=${encodeURIComponent(target)}`;
@@ -517,9 +613,9 @@ ipcMain.handle('navigate', async (_, url) => {
   return target;
 });
 
-ipcMain.handle('go-back',    () => browserView.webContents.canGoBack()    && browserView.webContents.goBack());
-ipcMain.handle('go-forward', () => browserView.webContents.canGoForward() && browserView.webContents.goForward());
-ipcMain.handle('reload',     () => browserView.webContents.reload());
+ipcMain.handle('go-back',    () => browserView?.webContents.canGoBack()    && browserView.webContents.goBack());
+ipcMain.handle('go-forward', () => browserView?.webContents.canGoForward() && browserView.webContents.goForward());
+ipcMain.handle('reload',     () => browserView?.webContents.reload());
 ipcMain.handle('get-current-url', () => currentURL);
 ipcMain.handle('get-model',       () => GEMINI_MODEL);
 ipcMain.handle('get-supported-models', () => SUPPORTED_MODELS);
@@ -546,6 +642,9 @@ ipcMain.handle('set-patches-panel-open', (_, { open }) => {
 });
 
 ipcMain.handle('apply-patch', async (_, { prompt }) => {
+  if (!isAuthenticated || !browserView) {
+    return { success: false, error: 'Sign in to create patches.' };
+  }
   if (!String(GEMINI_API_KEY || '').trim()) {
     return {
       success: false,
@@ -726,6 +825,11 @@ ipcMain.handle('save-api-key', async (_, { key }) => {
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   loadDotEnv();
+  if (process.platform === 'darwin' && app.dock) {
+    const iconPath = getAppIconPath();
+    if (iconPath) app.dock.setIcon(iconPath);
+  }
+  patchesStore = loadPatchesFromDisk();
   GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
   GEMINI_MODEL = process.env.PATCHES_MODEL || GEMINI_MODEL;
   if (!SUPPORTED_MODELS.includes(GEMINI_MODEL)) {
@@ -733,23 +837,21 @@ app.whenReady().then(() => {
     process.env.PATCHES_MODEL = GEMINI_MODEL;
   }
 
-  if (!GEMINI_API_KEY) openSettingsWindow();
   createWindow();
 
   // Global shortcut fires even when BrowserView has focus
   globalShortcut.register('CommandOrControl+K', () => {
-    if (mainWindow) mainWindow.webContents.send('toggle-command-bar');
+    if (mainWindow && isAuthenticated) mainWindow.webContents.send('toggle-command-bar');
   });
   globalShortcut.register('CommandOrControl+Shift+P', () => {
-    if (mainWindow) mainWindow.webContents.send('toggle-patches-panel');
+    if (mainWindow && isAuthenticated) mainWindow.webContents.send('toggle-patches-panel');
   });
   globalShortcut.register('CommandOrControl+,', () => {
-    openSettingsWindow();
+    if (isAuthenticated) openSettingsWindow();
   });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length > 0) return;
-    if (!GEMINI_API_KEY) openSettingsWindow();
     createWindow();
   });
 });

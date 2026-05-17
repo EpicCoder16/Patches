@@ -5,9 +5,35 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Patches</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="auth.css" />
 </head>
-<body>
-  <!-- ── Navigation Bar ──────────────────────────────────────────────────── -->
+<body class="auth-locked">
+  <!-- ── Auth gate (login / sign up) ───────────────────────────────────────── -->
+  <div id="auth-overlay" aria-modal="true" role="dialog" aria-labelledby="auth-title">
+    <div id="auth-card">
+      <img id="auth-logo" src="../build/patcheslogorounded.png" alt="Patches" />
+      <h1 id="auth-title">Welcome to Patches</h1>
+      <p id="auth-subtitle">Sign in to sync your patches across devices.</p>
+      <div id="auth-checking">
+        <div class="auth-spinner"></div>
+        <span>Checking session…</span>
+      </div>
+      <div id="auth-tabs" class="hidden">
+        <button type="button" class="auth-tab active" data-mode="signin">Sign in</button>
+        <button type="button" class="auth-tab" data-mode="signup">Sign up</button>
+      </div>
+      <div id="auth-form-wrap" class="hidden">
+        <form id="auth-form" novalidate>
+          <label for="auth-email">Email</label>
+          <input id="auth-email" type="email" name="email" autocomplete="email" placeholder="you@example.com" required />
+          <label for="auth-password">Password</label>
+          <input id="auth-password" type="password" name="password" autocomplete="current-password" placeholder="At least 6 characters" required />
+          <button type="submit" id="auth-submit">Sign in</button>
+        </form>
+        <p id="auth-error" class="hidden" role="alert"></p>
+      </div>
+    </div>
+  </div>
   <div id="navbar">
     <div id="nav-controls">
       <button class="nav-btn" id="btn-back" title="Back">
@@ -29,6 +55,7 @@
     </div>
 
     <div id="nav-actions">
+      <span id="nav-user-email" class="hidden" title="Signed in"></span>
       <div id="nav-api-hint" class="hidden" role="status">
         <span class="nav-api-hint-text">No API key — AI patches disabled.</span>
         <button type="button" class="nav-api-hint-btn" id="nav-api-hint-settings">Settings</button>
@@ -47,6 +74,7 @@
         <input type="checkbox" id="patch-toggle" checked />
         <label for="patch-toggle"></label>
       </div>
+      <button type="button" class="nav-btn nav-sign-out hidden" id="btn-sign-out" title="Sign out">Sign out</button>
       <button class="nav-btn icon-btn" id="btn-settings" title="Settings (Ctrl+,)">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
           <path d="M7 1.75v1.3M7 10.95v1.3M2.95 3.05l.92.92M10.13 10.23l.92.92M1.75 7h1.3M10.95 7h1.3M2.95 10.95l.92-.92M10.13 3.77l.92-.92" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
@@ -116,6 +144,10 @@
   <!-- ── Toast ────────────────────────────────────────────────────────────── -->
   <div id="toast-container"></div>
 
+  <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore-compat.js"></script>
+  <script src="auth.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

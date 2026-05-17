@@ -29,6 +29,8 @@ const panelClose      = document.getElementById('panel-close');
 const toastContainer  = document.getElementById('toast-container');
 const navApiHint      = document.getElementById('nav-api-hint');
 const navApiHintBtn   = document.getElementById('nav-api-hint-settings');
+const navUserEmail    = document.getElementById('nav-user-email');
+const btnSignOut      = document.getElementById('btn-sign-out');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let cmdBarOpen       = false;
@@ -37,6 +39,7 @@ let isLoading        = false;
 let currentURL       = '';
 const queuedPrompts  = [];
 let availableModels  = [];
+let appBooted        = false;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function getDomain(url) {
@@ -408,15 +411,31 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && cmdBarOpen) closeCommandBar();
 });
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-(async () => {
-  const [url, model, supportedModels, keyState] = await Promise.all([
+function updateAuthNav(user) {
+  if (!user) {
+    if (navUserEmail) navUserEmail.classList.add('hidden');
+    if (btnSignOut) btnSignOut.classList.add('hidden');
+    return;
+  }
+  if (navUserEmail) {
+    navUserEmail.textContent = user.email || 'Signed in';
+    navUserEmail.classList.remove('hidden');
+  }
+  if (btnSignOut) btnSignOut.classList.remove('hidden');
+}
+
+async function bootApp() {
+  if (appBooted) return;
+  appBooted = true;
+  const [url, model, supportedModels, keyState, authState] = await Promise.all([
     window.patches.getCurrentURL(),
     window.patches.getModel(),
     window.patches.getSupportedModels(),
     window.patches.getApiKeyStatus(),
+    window.patches.getAuthUser(),
   ]);
   updateURLBar(url);
+  updateAuthNav(authState?.user);
   if (navApiHint && keyState && !keyState.hasKey) {
     navApiHint.classList.remove('hidden');
   }
@@ -434,5 +453,29 @@ document.addEventListener('keydown', e => {
     }
     cmdModelSelect.value = model;
     cmdModelSelect.title = model;
+  }
+}
+
+if (btnSignOut) {
+  btnSignOut.addEventListener('click', async () => {
+    if (!confirm('Sign out of Patches?')) return;
+    await window.patches.signOut();
+    appBooted = false;
+    updateAuthNav(null);
+    showToast('Signed out');
+  });
+}
+
+window.patches.onAuthReady(() => {
+  document.body.classList.remove('auth-locked');
+  bootApp().catch(() => {});
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(async () => {
+  const authState = await window.patches.getAuthUser();
+  if (authState?.isAuthenticated) {
+    document.body.classList.remove('auth-locked');
+    await bootApp();
   }
 })();
