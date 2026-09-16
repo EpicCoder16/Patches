@@ -26,11 +26,17 @@ By placing your Firebase config in `firebase-config.json`, the credentials will 
 
 Get a key at <https://aistudio.google.com/apikey>
 
+Google AI Studio now creates **authorization keys** that start with `AQ.`. As of September 2026 the Gemini API **rejects standard `AIza…` keys**. Create a new key in AI Studio, then:
+
 ```bash
 # create a .env file in the project root
-echo "GEMINI_API_KEY=your_api_key_here" > .env
+echo "GEMINI_API_KEY=AQ.your_api_key_here" > .env
 npm start
 ```
+
+Settings accepts both `AQ.` (new) and `AIza` (legacy) prefixes. Prefer an `AQ.` key.
+
+Patches sends the key as an `x-goog-api-key` header (not a `?key=` query parameter).
 
 ### Choose a model (optional)
 
@@ -51,6 +57,7 @@ Supported in the app:
 Sign in first, then browse and patch sites.
 
 - **New patch** (navbar, ⌘K)  →  AI prompt bar in the center (what you use to *create* a patch)
+- **Notes** (navbar, ⌘⇧N)     →  Same prompt bar, routed to sticky notes for this page
 - **Saved** (navbar, ⌘⇧P)     →  Right sidebar: list, aspect checkboxes, **Reset site**, remove
 - Toggle switch →  Enable/disable all patches
 
@@ -61,6 +68,10 @@ Sign in first, then browse and patch sites.
 3. Sends to Gemini: system prompt asks for a **JSON** object `{"aspects":[{"label","css"},...]}` so independent changes (e.g. dark mode vs font size) can be toggled separately in the patches panel.
 4. Each aspect’s CSS is validated (braces, `!important` where needed); legacy patches with a single `css` field still work as one aspect.
 5. Combined enabled aspects are injected as `<style>` tags, saved under `storage/patches.json` per domain.
+
+### Page notes (prompt-driven)
+
+Use **Notes** (⌘⇧N) like **New patch**: type what you want pinned (e.g. “show popular videos”). Patches builds a redacted outline once, sends it **with your prompt** to Gemini, and overlays sticky notes. Refresh re-runs the last prompt. There is no background page reading. User-initiated notes are capped at 30 requests per domain per hour. Raw page text is not saved; note positions are stored locally.
 
 ### Color requests (“blues → reds”)
 
@@ -108,8 +119,10 @@ npm run build
 Required content:
 
 ```env
-GEMINI_API_KEY=your_api_key_here
+GEMINI_API_KEY=AQ.your_api_key_here
 ```
+
+Legacy `AIza…` keys may still be stored locally; Gemini itself rejects standard keys as of September 2026. Use a new authorization key from AI Studio.
 
 If no key is found on launch, Patches opens **Settings** (always-on-top) and the main window. You can browse and use saved patches; add a key to enable AI patch generation.
 

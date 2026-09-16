@@ -6,6 +6,7 @@ const btnBack         = document.getElementById('btn-back');
 const btnForward      = document.getElementById('btn-forward');
 const btnReload       = document.getElementById('btn-reload');
 const btnOpenBar      = document.getElementById('btn-open-bar');
+const btnOpenNotes    = document.getElementById('btn-open-notes');
 const btnPatchesPanel = document.getElementById('btn-patches-panel');
 const btnSettings     = document.getElementById('btn-settings');
 const patchToggle     = document.getElementById('patch-toggle');
@@ -31,8 +32,12 @@ const navApiHint      = document.getElementById('nav-api-hint');
 const navApiHintBtn   = document.getElementById('nav-api-hint-settings');
 const navUserEmail    = document.getElementById('nav-user-email');
 const btnSignOut      = document.getElementById('btn-sign-out');
+const navNotes        = document.getElementById('nav-notes');
+const navNotesLabel   = document.getElementById('nav-notes-label');
+const navNotesRefresh = document.getElementById('nav-notes-refresh');
 
 // ── State ─────────────────────────────────────────────────────────────────────
+let overlayKind      = 'patch';
 let cmdBarOpen       = false;
 let patchesPanelOpen = false;
 let isLoading        = false;
@@ -45,6 +50,48 @@ let appBooted        = false;
 function getDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); }
   catch { return url; }
+}
+
+function applyNotesState(state) {
+  if (!navNotes || !state) return;
+  const phase = state.phase || 'idle';
+  navNotes.dataset.phase = phase;
+  const domain = state.domain || getDomain(currentURL);
+  const labels = {
+    idle: state.lastPrompt ? 'Notes ready' : 'Notes idle',
+    reading: 'Reading page…',
+    sending: 'Sending to Gemini…',
+    capped: 'Notes paused (hourly cap)',
+    error: 'Notes error',
+  };
+  navNotesLabel.textContent = labels[phase] || 'Notes idle';
+  if (navNotesRefresh) {
+    if (state.lastPrompt) navNotesRefresh.classList.remove('hidden');
+    else navNotesRefresh.classList.add('hidden');
+  }
+  navNotes.title = state.error
+    ? String(state.error)
+    : phase === 'sending' || phase === 'reading'
+      ? `Visible page text on ${domain} is being sent to Gemini for sticky notes.`
+      : state.lastPrompt
+        ? `Last notes prompt on ${domain}: ${state.lastPrompt}`
+        : `Ask AI to pin notes on ${domain}`;
+}
+
+if (navNotesRefresh) {
+  navNotesRefresh.addEventListener('click', async () => {
+    setStatusLoading('Re-running last notes prompt…');
+    const result = await window.patches.refreshPageNotes();
+    if (!result || !result.success) {
+      setStatusNotesError(
+        (result && result.error) || 'Could not refresh notes',
+        result && result.debug
+      );
+      showToast((result && result.error) || 'Could not refresh notes', 'error');
+    } else {
+      showToast(`Updated ${result.itemCount || 0} notes`);
+    }
+  });
 }
 
 function showToast(message, type = 'success') {
@@ -93,7 +140,8 @@ urlInput.addEventListener('focus', () => urlInput.select());
 btnBack.addEventListener('click',    () => window.patches.goBack());
 btnForward.addEventListener('click', () => window.patches.goForward());
 btnReload.addEventListener('click',  () => window.patches.reload());
-btnOpenBar.addEventListener('click', () => openCommandBar());
+btnOpenBar.addEventListener('click', () => openCommandBar('patch'));
+if (btnOpenNotes) btnOpenNotes.addEventListener('click', () => openCommandBar('notes'));
 btnPatchesPanel.addEventListener('click', () => togglePatchesPanel());
 btnSettings.addEventListener('click', () => window.patches.openSettings());
 
@@ -114,15 +162,31 @@ cmdModelSelect.addEventListener('change', async () => {
 });
 
 // ── Command bar ───────────────────────────────────────────────────────────────
-async function openCommandBar() {
-  if (cmdBarOpen) return;
+function syncOverlayKind(kind) {
+  overlayKind = kind === 'notes' ? 'notes' : 'patch';
+  if (cmdInput) {
+    cmdInput.placeholder = overlayKind === 'notes'
+      ? 'What should notes show? “popular videos”, “due this week”…'
+      : 'Describe a change… "hide sidebar", "dark mode", "remove ads"';
+  }
+  if (cmdHints) {
+    cmdHints.querySelectorAll('.hint').forEach((chip) => {
+      const forKind = chip.getAttribute('data-kind') || 'patch';
+      chip.classList.toggle('hidden', forKind !== overlayKind);
+    });
+  }
+}
+
+async function openCommandBar(kind = 'patch') {
+  if (cmdBarOpen && overlayKind === (kind === 'notes' ? 'notes' : 'patch')) return;
+  if (cmdBarOpen) await closeCommandBar();
   if (patchesPanelOpen) {
     patchesPanelOpen = false;
     patchesPanel.classList.add('hidden');
     await window.patches.setPatchesPanelOpen({ open: false });
   }
   cmdBarOpen = true;
-  // Tell main to shrink the BrowserView so our overlay is actually visible
+  syncOverlayKind(kind);
   await window.patches.setOverlayOpen({ open: true });
   cmdOverlay.classList.remove('hidden');
   cmdInput.value = '';
@@ -180,6 +244,25 @@ function setStatusError(msg) {
     <span>${escapeHTML(msg)}</span>`;
 }
 
+function setStatusNotesError(msg, debug) {
+  const raw = debug && (debug.rawGeminiBody || debug.stack)
+    ? [debug.finishReason && `finishReason: ${debug.finishReason}`, debug.geminiAuth, debug.requestUrl, debug.error, debug.stack, debug.rawGeminiBody]
+        .filter(Boolean)
+        .join('\n\n')
+    : '';
+  const detShort = raw.length > 4000 ? `${raw.slice(0, 4000)}…` : raw;
+  cmdStatus.className = 'error quota';
+  cmdStatus.innerHTML = `
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" class="cmd-status-icon"><path d="M7 2v5.5M7 9.5v1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <div class="cmd-status-quota-wrap">
+      <div class="cmd-status-quota-text">
+        <strong class="cmd-status-quota-title">Notes failed</strong>
+        <p class="cmd-status-quota-body">${escapeHTML(msg || 'Could not create notes.')}</p>
+      </div>
+      ${detShort ? `<details class="cmd-status-details" open><summary>Gemini debug</summary><pre class="cmd-status-details-pre">${escapeHTML(detShort)}</pre></details>` : ''}
+    </div>`;
+}
+
 function setStatusNeedsApiKey() {
   cmdStatus.className = 'error quota';
   cmdStatus.innerHTML = `
@@ -226,11 +309,65 @@ function setStatusGeminiQuota(summary, detail) {
 }
 
 // ── Submit patch ──────────────────────────────────────────────────────────────
+async function submitNotes(prompt) {
+  if (isLoading) {
+    queuedPrompts.push({ prompt, kind: 'notes' });
+    cmdInput.value = '';
+    setStatusLoading(`Creating notes… (${queuedPrompts.length} queued)`);
+    showToast(`Queued notes request (${queuedPrompts.length})`);
+    return;
+  }
+
+  isLoading = true;
+  cmdInput.disabled = true;
+  cmdSubmit.disabled = true;
+  setStatusLoading('Reading page and sending to Gemini…');
+
+  try {
+    cmdInput.value = '';
+    const result = await window.patches.applyPageNotes({ prompt });
+    if (result && result.success) {
+      setStatusSuccess(prompt, `${result.itemCount || 0} notes`);
+      showToast(`Pinned ${result.itemCount || 0} notes on ${result.domain || 'this page'}`);
+      setTimeout(() => closeCommandBar(), 1600);
+      return;
+    }
+    if (result && result.needsApiKey) {
+      setStatusNeedsApiKey();
+      return;
+    }
+    if (result && result.geminiQuota) {
+      setStatusGeminiQuota(result.error, result.errorDetail || (result.debug && result.debug.rawGeminiBody));
+      return;
+    }
+    setStatusNotesError((result && result.error) || 'Could not create notes.', result && result.debug);
+  } catch (err) {
+    setStatusNotesError(err.message || 'Unexpected error.', { stack: err.stack, error: err.message });
+  } finally {
+    isLoading = false;
+    cmdInput.disabled = false;
+    cmdSubmit.disabled = false;
+    if (queuedPrompts.length > 0) {
+      const next = queuedPrompts.shift();
+      overlayKind = next && next.kind ? next.kind : 'patch';
+      syncOverlayKind(overlayKind);
+      cmdInput.value = next && next.prompt ? next.prompt : String(next || '');
+      setTimeout(() => submitPatch(), 80);
+      return;
+    }
+    if (cmdBarOpen) cmdInput.focus();
+  }
+}
+
 async function submitPatch() {
   const prompt = cmdInput.value.trim();
   if (!prompt) return;
+  if (overlayKind === 'notes') {
+    await submitNotes(prompt);
+    return;
+  }
   if (isLoading) {
-    queuedPrompts.push(prompt);
+    queuedPrompts.push({ prompt, kind: 'patch' });
     cmdInput.value = '';
     setStatusLoading(`Generating CSS patch… (${queuedPrompts.length} queued)`);
     showToast(`Queued patch (${queuedPrompts.length})`);
@@ -300,8 +437,10 @@ async function submitPatch() {
     cmdSubmit.disabled = false;
 
     if (queuedPrompts.length > 0) {
-      const nextPrompt = queuedPrompts.shift();
-      cmdInput.value = nextPrompt;
+      const next = queuedPrompts.shift();
+      overlayKind = next && next.kind ? next.kind : 'patch';
+      syncOverlayKind(overlayKind);
+      cmdInput.value = next && next.prompt ? next.prompt : String(next || '');
       setTimeout(() => submitPatch(), 80);
       return;
     }
@@ -389,16 +528,25 @@ async function refreshPatchesPanel() {
 }
 
 // ── IPC listeners ─────────────────────────────────────────────────────────────
-window.patches.onURLChanged(url => updateURLBar(url));
+window.patches.onURLChanged(url => {
+  updateURLBar(url);
+  window.patches.getPageNotesState().then(applyNotesState).catch(() => {});
+});
 window.patches.onTitleChanged(() => {});
-window.patches.onToggleCommandBar(() => { cmdBarOpen ? closeCommandBar() : openCommandBar(); });
+window.patches.onPageNotesStatus((state) => applyNotesState(state));
+window.patches.onToggleCommandBar(() => { cmdBarOpen ? closeCommandBar() : openCommandBar('patch'); });
+window.patches.onToggleNotesBar(() => { cmdBarOpen && overlayKind === 'notes' ? closeCommandBar() : openCommandBar('notes'); });
 window.patches.onTogglePatchesPanel(() => togglePatchesPanel());
 
 // ── Keyboard shortcuts (renderer window) ──────────────────────────────────────
 document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
     e.preventDefault();
-    cmdBarOpen ? closeCommandBar() : openCommandBar();
+    cmdBarOpen ? closeCommandBar() : openCommandBar('patch');
+  }
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'N' || e.key === 'n')) {
+    e.preventDefault();
+    cmdBarOpen && overlayKind === 'notes' ? closeCommandBar() : openCommandBar('notes');
   }
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'P') {
     e.preventDefault();
@@ -427,14 +575,16 @@ function updateAuthNav(user) {
 async function bootApp() {
   if (appBooted) return;
   appBooted = true;
-  const [url, model, supportedModels, keyState, authState] = await Promise.all([
+  const [url, model, supportedModels, keyState, authState, notesState] = await Promise.all([
     window.patches.getCurrentURL(),
     window.patches.getModel(),
     window.patches.getSupportedModels(),
     window.patches.getApiKeyStatus(),
     window.patches.getAuthUser(),
+    window.patches.getPageNotesState(),
   ]);
   updateURLBar(url);
+  applyNotesState(notesState);
   updateAuthNav(authState?.user);
   if (navApiHint && keyState && !keyState.hasKey) {
     navApiHint.classList.remove('hidden');

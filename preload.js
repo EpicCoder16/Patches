@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('patches', {
   reload:             ()     => ipcRenderer.invoke('reload'),
   getCurrentURL:      ()     => ipcRenderer.invoke('get-current-url'),
   getApiKeyStatus:    ()     => ipcRenderer.invoke('get-api-key-status'),
+  applyPageNotes:     (opts) => ipcRenderer.invoke('apply-page-notes', opts),
+  getPageNotesState:  ()     => ipcRenderer.invoke('get-page-notes-state'),
+  refreshPageNotes:   ()     => ipcRenderer.invoke('refresh-page-notes'),
   getModel:           ()     => ipcRenderer.invoke('get-model'),
   getSupportedModels: ()     => ipcRenderer.invoke('get-supported-models'),
   setModel:           (model) => ipcRenderer.invoke('set-model', { model }),
@@ -38,7 +41,9 @@ contextBridge.exposeInMainWorld('patches', {
 
   onURLChanged:         (cb) => ipcRenderer.on('url-changed',         (_, v) => cb(v)),
   onTitleChanged:       (cb) => ipcRenderer.on('title-changed',        (_, v) => cb(v)),
+  onPageNotesStatus:    (cb) => ipcRenderer.on('page-notes-status',    (_, v) => cb(v)),
   onToggleCommandBar:   (cb) => ipcRenderer.on('toggle-command-bar',   ()     => cb()),
+  onToggleNotesBar:     (cb) => ipcRenderer.on('toggle-notes-bar',     ()     => cb()),
   onTogglePatchesPanel: (cb) => ipcRenderer.on('toggle-patches-panel', ()     => cb()),
   onModelUsed:          (cb) => ipcRenderer.on('model-used',           (_, v) => cb(v)),
 });

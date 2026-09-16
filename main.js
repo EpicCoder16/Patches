@@ -2,6 +2,10 @@ const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut, shell } = requ
 const path = require('path');
 const fs   = require('fs');
 const { isFirebaseConfigured, getFirebaseWebConfig } = require('./firebase-sync');
+const { isValidGeminiApiKey, geminiKeyFormatError } = require('./lib/geminiKey');
+const { callGeminiGenerateContent } = require('./lib/geminiClient');
+const { extractNotableItems } = require('./lib/geminiExtract');
+const { createPageNotesStore } = require('./lib/pageNotesStore');
 
 function getAppIconPath() {
   const png = path.join(__dirname, 'build', 'icon.png');
@@ -53,16 +57,6 @@ function loadDotEnv() {
   return null;
 }
 
-function isGeminiCapacityError(status, msg) {
-  return (
-    status === 429 ||
-    status === 503 ||
-    /exceeded your current quota|quota exceeded|high demand|currently overloaded|resource_exhausted|rate.?limit|free_tier|too many requests|try again later|temporarily unavailable/i.test(
-      String(msg || '')
-    )
-  );
-}
-
 function getUserEnvPath() {
   return path.join(app.getPath('userData'), '.env');
 }
@@ -95,24 +89,6 @@ const SUPPORTED_MODELS = [
   'gemini-2.0-flash-lite',
 ];
 
-const GEMINI_RETRIES_PER_MODEL = 3;
-const GEMINI_RETRY_BACKOFF_MS = [700, 1800, 3500];
-
-function sleepMs(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isGeminiModelUnavailableError(status, msg) {
-  const m = String(msg || '');
-  return (
-    status === 404 ||
-    /not found|is not supported|not supported for generatecontent|invalid model/i.test(m)
-  );
-}
-// Gemini endpoint — model is injected into the URL, key as query param
-const GEMINI_URL     = (model) =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
-
 let mainWindow   = null;
 let browserView  = null;
 let settingsWindow = null;
@@ -124,6 +100,11 @@ let isAuthenticated    = false;
 let authUser           = null;
 let patchesStore       = {};
 let patchesCloudSync   = false;
+let pageNotesStore     = null;
+let notesPhase         = 'idle';
+let notesExtractInFlight = false;
+let notesPromptHours   = {};
+const MAX_NOTES_PROMPTS_PER_HOUR = 30;
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 function getPatchesFilePath() {
@@ -198,11 +179,11 @@ function openSettingsWindow() {
 
   settingsWindow = new BrowserWindow({
     width: 480,
-    height: 320,
+    height: 348,
     minWidth: 480,
-    minHeight: 320,
+    minHeight: 348,
     maxWidth: 480,
-    maxHeight: 320,
+    maxHeight: 348,
     resizable: false,
     maximizable: false,
     minimizable: false,
@@ -397,91 +378,218 @@ async function generateCSSFromPrompt(prompt, rawHTML, domain) {
   const hints = domainPatchHints(domain || '');
   const userText = `TASK: ${prompt}\n\n${hints}PAGE STRUCTURE (LAYOUT_HINTS list which major containers exist; PAGE_OUTLINE is a tree of tags with id/class/role):\n${domSnapshot}\n\nRespond with only the JSON object described in your instructions.`;
 
-  // Gemini uses a single "contents" array; system instruction is separate.
-  const body = {
-    system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-    contents: [{
-      role: 'user',
-      parts: [{ text: userText }],
-    }],
+  const generated = await callGeminiGenerateContent({
+    apiKey: GEMINI_API_KEY,
+    preferredModel: GEMINI_MODEL,
+    supportedModels: SUPPORTED_MODELS,
+    systemText: SYSTEM_PROMPT,
+    userText,
     generationConfig: {
       temperature:     0.2,
       topP:            0.9,
       maxOutputTokens: 2048,
     },
+  });
+
+  return {
+    aspects: parseModelAspects(generated.text),
+    usedModel: generated.usedModel,
+    fallbackUsed: generated.fallbackUsed,
+    fallbackError: generated.fallbackError,
   };
+}
+// ── Page understanding (sticky notes) — separate from CSS patches ─────────────
+function pageHelpersSource() {
+  const files = ['buildPageOutline.js', 'stickyNotes.js'];
+  return files.map((f) => fs.readFileSync(path.join(__dirname, 'page', f), 'utf-8')).join('\n;\n');
+}
 
-  const candidates = [GEMINI_MODEL, ...SUPPORTED_MODELS.filter((m) => m !== GEMINI_MODEL)];
-  let noticeFromEarlierModel = '';
+function serializeNotesDebug(value, max = 40000) {
+  if (value == null) return '';
+  let text = typeof value === 'string' ? value : '';
+  if (!text) {
+    try { text = JSON.stringify(value); } catch { text = String(value); }
+  }
+  if (text.length > max) return `${text.slice(0, max)}…[truncated]`;
+  return text;
+}
 
-  for (let mi = 0; mi < candidates.length; mi++) {
-    const model = candidates[mi];
-    const moreModels = mi < candidates.length - 1;
-    let exhaustedModelMsg = '';
+function notesDebugPayload(err, extra) {
+  const debug = {
+    geminiAuth: (err && err.notesDebug && err.notesDebug.geminiAuth)
+      || (err && err.geminiAuth)
+      || 'x-goog-api-key header via callGeminiGenerateContent (not ?key=)',
+    requestUrl: (err && err.notesDebug && err.notesDebug.requestUrl) || (err && err.requestUrl) || '',
+    finishReason: (err && err.notesDebug && err.notesDebug.finishReason) || (err && err.finishReason) || '',
+    rawGeminiBody: serializeNotesDebug(
+      (err && err.notesDebug && err.notesDebug.rawGeminiBody) || (err && err.rawGeminiBody) || ''
+    ),
+    error: err ? String(err.message || err) : '',
+    stack: err && err.stack ? String(err.stack) : '',
+    ...(extra || {}),
+  };
+  console.error('[patches:notes] failure debug', debug);
+  return debug;
+}
 
-    for (let attempt = 0; attempt < GEMINI_RETRIES_PER_MODEL; attempt++) {
-      const res = await fetch(GEMINI_URL(model), {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-      }).catch((e) => {
-        throw new Error(`Network error: ${e.message}`);
-      });
+async function injectPageHelpers() {
+  if (!browserView) return;
+  await browserView.webContents.executeJavaScript(`${pageHelpersSource()}\n;true;`);
+}
 
-      const data = await res.json().catch(() => null);
+function emitNotesStatus(extra) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const domain = getDomain(currentURL);
+  const lastPrompt = pageNotesStore ? pageNotesStore.getLastPrompt(domain) : '';
+  mainWindow.webContents.send('page-notes-status', {
+    domain,
+    phase: notesPhase,
+    lastPrompt,
+    ...(extra || {}),
+  });
+}
 
-      if (!res.ok) {
-        const msg = data?.error?.message || res.statusText;
-        const capacityError = isGeminiCapacityError(res.status, msg);
-        const modelGone = isGeminiModelUnavailableError(res.status, msg);
-        const detail = `Gemini ${res.status}: ${msg}`;
+function canPromptExtract(domain) {
+  const now = Date.now();
+  const hourAgo = now - 60 * 60 * 1000;
+  const times = (notesPromptHours[domain] || []).filter((t) => t > hourAgo);
+  notesPromptHours[domain] = times;
+  if (times.length >= MAX_NOTES_PROMPTS_PER_HOUR) return { ok: false, reason: 'hourly-cap' };
+  return { ok: true };
+}
 
-        if (modelGone) {
-          exhaustedModelMsg = detail;
-          break;
-        }
+function recordPromptExtract(domain) {
+  notesPromptHours[domain] = [...(notesPromptHours[domain] || []), Date.now()];
+}
 
-        if (capacityError) {
-          exhaustedModelMsg = detail;
-          if (attempt < GEMINI_RETRIES_PER_MODEL - 1) {
-            await sleepMs(GEMINI_RETRY_BACKOFF_MS[attempt] ?? 2500);
-            continue;
-          }
-          break;
-        }
+async function unmountPageNotes() {
+  if (!browserView) return;
+  await browserView.webContents.executeJavaScript(`
+    try { window.unmountPatchesStickyNotes(); } catch (e) {}
+  `).catch(() => {});
+}
 
-        const err = new Error(detail);
-        throw err;
-      }
-
-      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!raw) {
-        const reason = data?.candidates?.[0]?.finishReason || 'unknown';
-        throw new Error(`Empty response from Gemini (finishReason: ${reason}).`);
-      }
-
-      return {
-        aspects: parseModelAspects(raw),
-        usedModel: model,
-        fallbackUsed: model !== GEMINI_MODEL,
-        fallbackError: model !== GEMINI_MODEL ? noticeFromEarlierModel || null : null,
-      };
-    }
-
-    noticeFromEarlierModel = exhaustedModelMsg || noticeFromEarlierModel;
-    if (moreModels) await sleepMs(400);
+async function runPageUnderstanding({ prompt, reason }) {
+  if (!isAuthenticated || !browserView || !pageNotesStore) {
+    return { success: false, error: 'Sign in to create page notes.' };
+  }
+  const domain = getDomain(currentURL);
+  let text = String(prompt || '').trim();
+  if (!text && reason === 'refresh') text = pageNotesStore.getLastPrompt(domain);
+  if (!text) {
+    notesPhase = 'error';
+    const error = reason === 'refresh' ? 'No previous notes prompt to re-run on this site.' : 'Enter a notes request.';
+    emitNotesStatus({ error });
+    return { success: false, error };
   }
 
-  const err = new Error(noticeFromEarlierModel || 'Model temporarily unavailable.');
-  err.geminiQuota = true;
-  err.geminiErrorDetail = noticeFromEarlierModel || 'All configured Gemini models are currently in high demand.';
-  throw err;
+  const gate = canPromptExtract(domain);
+  if (!gate.ok) {
+    notesPhase = 'capped';
+    const error = `Hourly notes limit reached for ${domain} (${MAX_NOTES_PROMPTS_PER_HOUR}/hour). Try again later.`;
+    emitNotesStatus({ error, capReason: gate.reason });
+    return { success: false, error };
+  }
+
+  if (notesExtractInFlight) {
+    return { success: false, error: 'A notes request is already running.' };
+  }
+  if (!String(GEMINI_API_KEY || '').trim()) {
+    notesPhase = 'error';
+    const error = 'Add a Gemini API key in Settings to create page notes.';
+    emitNotesStatus({ error });
+    return { success: false, needsApiKey: true, error };
+  }
+
+  notesExtractInFlight = true;
+  notesPhase = 'reading';
+  emitNotesStatus({ lastPrompt: text });
+  try {
+    await injectPageHelpers();
+    const outline = await browserView.webContents.executeJavaScript('window.buildPageOutline()');
+    if (!outline || typeof outline !== 'object') {
+      throw new Error('Could not read a page outline from this document.');
+    }
+    notesPhase = 'sending';
+    emitNotesStatus();
+    const extracted = await extractNotableItems({
+      outline,
+      userPrompt: text,
+      callGemini: ({ systemText, userText, generationConfig }) =>
+        callGeminiGenerateContent({
+          apiKey: GEMINI_API_KEY,
+          preferredModel: GEMINI_MODEL,
+          supportedModels: SUPPORTED_MODELS,
+          systemText,
+          userText,
+          generationConfig,
+        }),
+    });
+    recordPromptExtract(domain);
+    pageNotesStore.setLastPrompt(domain, text);
+    const positions = pageNotesStore.getPositions(domain);
+    const items = (extracted.items || []).map((item, i) => ({
+      ...item,
+      id: `n-${item.anchorIndex}-${i}`,
+    }));
+    const payloadJson = JSON.stringify({ items, positions });
+    await injectPageHelpers();
+    const mounted = await browserView.webContents.executeJavaScript(`
+      (function() {
+        try {
+          if (typeof window.mountPatchesStickyNotes !== 'function') {
+            throw new Error('mountPatchesStickyNotes is not defined');
+          }
+          window.mountPatchesStickyNotes(JSON.parse(${JSON.stringify(payloadJson)}));
+          return { ok: true };
+        } catch (e) {
+          return {
+            ok: false,
+            error: String(e && e.message ? e.message : e),
+            stack: String(e && e.stack ? e.stack : ''),
+          };
+        }
+      })();
+    `);
+    if (!mounted || mounted.ok === false) {
+      const err = new Error((mounted && mounted.error) || 'Failed to mount sticky notes.');
+      err.notesDebug = {
+        ...(extracted.debug || {}),
+        finishReason: extracted.debug && extracted.debug.finishReason,
+        pageError: mounted && mounted.error,
+        pageStack: mounted && mounted.stack,
+      };
+      throw err;
+    }
+    notesPhase = 'idle';
+    emitNotesStatus({ itemCount: items.length, lastPrompt: text });
+    return { success: true, domain, itemCount: items.length, usedModel: extracted.usedModel };
+  } catch (err) {
+    notesPhase = 'error';
+    const debug = notesDebugPayload(err, err.notesDebug || {});
+    emitNotesStatus({ error: err.message || String(err), debug });
+    return {
+      success: false,
+      error: err.message || String(err),
+      debug,
+      geminiQuota: Boolean(err.geminiQuota),
+      errorDetail: err.geminiErrorDetail || err.message,
+    };
+  } finally {
+    notesExtractInFlight = false;
+  }
 }
+
 // ── BrowserView ───────────────────────────────────────────────────────────────
 function createBrowserView() {
   if (browserView || !mainWindow) return;
   browserView = new BrowserView({
-    webPreferences: { nodeIntegration: false, contextIsolation: true, webSecurity: false },
+    webPreferences: {
+      preload: path.join(__dirname, 'pagePreload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      webSecurity: false,
+    },
   });
   mainWindow.addBrowserView(browserView);
   layoutBrowserView();
@@ -492,14 +600,17 @@ function createBrowserView() {
     currentURL = url;
     mainWindow.webContents.send('url-changed', url);
     await applyDomainPatches(url);
+    emitNotesStatus();
   });
   browserView.webContents.on('did-navigate', (_, url) => {
     currentURL = url;
     mainWindow.webContents.send('url-changed', url);
+    emitNotesStatus();
   });
   browserView.webContents.on('did-navigate-in-page', (_, url) => {
     currentURL = url;
     mainWindow.webContents.send('url-changed', url);
+    emitNotesStatus();
   });
   browserView.webContents.on('page-title-updated', (_, title) => {
     mainWindow.webContents.send('title-changed', title);
@@ -803,23 +914,45 @@ ipcMain.handle('open-external', async (_, { url }) => {
 });
 
 ipcMain.handle('get-api-key-status', () => {
-  const key = String(process.env.GEMINI_API_KEY || '').trim();
-  const hasKey = key.length > 0;
+  const key = String(process.env.GEMINI_API_KEY || GEMINI_API_KEY || '').trim();
+  const hasKey = isValidGeminiApiKey(key);
   const maskedKey = hasKey && key.length > 8
     ? `${key.slice(0, 4)}...${key.slice(-4)}`
     : hasKey ? key : '';
-  return { hasKey, key, maskedKey, model: GEMINI_MODEL, supportedModels: SUPPORTED_MODELS };
+  return { hasKey, key: hasKey ? key : '', maskedKey, model: GEMINI_MODEL, supportedModels: SUPPORTED_MODELS };
 });
 
 ipcMain.handle('save-api-key', async (_, { key }) => {
   const value = String(key || '').trim();
   if (!value) return { success: false, error: 'API key is required.' };
-  if (!value.startsWith('AIza')) return { success: false, error: 'Gemini API key should start with AIza.' };
+  if (!isValidGeminiApiKey(value)) return { success: false, error: geminiKeyFormatError() };
 
   upsertUserEnv({ GEMINI_API_KEY: value, PATCHES_MODEL: GEMINI_MODEL });
   app.relaunch();
   app.exit(0);
   return { success: true };
+});
+
+ipcMain.handle('get-page-notes-state', () => {
+  const domain = getDomain(currentURL);
+  const lastPrompt = pageNotesStore ? pageNotesStore.getLastPrompt(domain) : '';
+  return { domain, phase: notesPhase, lastPrompt };
+});
+
+ipcMain.handle('apply-page-notes', async (_, { prompt }) => {
+  return runPageUnderstanding({ prompt, reason: 'prompt' });
+});
+
+ipcMain.handle('refresh-page-notes', async () => {
+  return runPageUnderstanding({ reason: 'refresh' });
+});
+
+ipcMain.on('note-position', (_, payload) => {
+  if (!pageNotesStore || !payload) return;
+  const domain = getDomain(currentURL);
+  const noteId = String(payload.noteId || '').trim();
+  if (!noteId) return;
+  pageNotesStore.savePosition(domain, noteId, payload.x, payload.y);
 });
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
@@ -830,7 +963,15 @@ app.whenReady().then(() => {
     if (iconPath) app.dock.setIcon(iconPath);
   }
   patchesStore = loadPatchesFromDisk();
-  GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+  pageNotesStore = createPageNotesStore(app.getPath('userData'));
+  const loadedKey = String(process.env.GEMINI_API_KEY || '').trim();
+  if (loadedKey && !isValidGeminiApiKey(loadedKey)) {
+    console.warn('[patches] GEMINI_API_KEY format not recognized (expected AQ. or AIza). Ignoring.');
+    delete process.env.GEMINI_API_KEY;
+    GEMINI_API_KEY = '';
+  } else {
+    GEMINI_API_KEY = loadedKey;
+  }
   GEMINI_MODEL = process.env.PATCHES_MODEL || GEMINI_MODEL;
   if (!SUPPORTED_MODELS.includes(GEMINI_MODEL)) {
     GEMINI_MODEL = SUPPORTED_MODELS[0];
@@ -842,6 +983,9 @@ app.whenReady().then(() => {
   // Global shortcut fires even when BrowserView has focus
   globalShortcut.register('CommandOrControl+K', () => {
     if (mainWindow && isAuthenticated) mainWindow.webContents.send('toggle-command-bar');
+  });
+  globalShortcut.register('CommandOrControl+Shift+N', () => {
+    if (mainWindow && isAuthenticated) mainWindow.webContents.send('toggle-notes-bar');
   });
   globalShortcut.register('CommandOrControl+Shift+P', () => {
     if (mainWindow && isAuthenticated) mainWindow.webContents.send('toggle-patches-panel');

@@ -9,6 +9,11 @@ const errorText = document.getElementById('error-text');
 const keyStatus = document.getElementById('key-status');
 const modelSelect = document.getElementById('model-select');
 
+function isValidGeminiApiKey(value) {
+  const key = String(value || '').trim();
+  return key.length >= 16 && (key.startsWith('AQ.') || key.startsWith('AIza'));
+}
+
 function showError(message) {
   errorText.textContent = message;
   errorText.classList.remove('hidden');
@@ -38,8 +43,8 @@ keyForm.addEventListener('submit', async (event) => {
     showError('Please enter your Gemini API key.');
     return;
   }
-  if (!value.startsWith('AIza')) {
-    showError('Gemini API keys should start with AIza.');
+  if (!isValidGeminiApiKey(value)) {
+    showError('Gemini API keys should start with AQ. (new) or AIza (legacy).');
     return;
   }
 
