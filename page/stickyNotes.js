@@ -7,9 +7,9 @@ window.unmountPatchesStickyNotes = function unmountPatchesStickyNotes() {
 
 window.mountPatchesStickyNotes = function mountPatchesStickyNotes(payload) {
   window.unmountPatchesStickyNotes();
-  const items = (payload && payload.items) || [];
+  const groups = (payload && payload.groups) || [];
   const positions = (payload && payload.positions) || {};
-  if (!items.length) return { ok: true, itemCount: 0 };
+  if (!groups.length) return { ok: true, itemCount: 0, groupCount: 0, anchorResolution: [] };
 
   const host = document.createElement('div');
   host.id = 'patches-notes-host';
@@ -26,13 +26,14 @@ window.mountPatchesStickyNotes = function mountPatchesStickyNotes(payload) {
   style.textContent = [
     ':host { all: initial; }',
     '.layer { position: fixed; inset: 0; pointer-events: none; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }',
-    '.note { position: fixed; width: 220px; pointer-events: auto; background: #f7e7a1; color: #1a1a14; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.28); overflow: hidden; }',
-    '.head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 6px; cursor: grab; background: rgba(0,0,0,0.06); user-select: none; }',
+    '.note { position: fixed; width: 260px; pointer-events: auto; background: #f7e7a1; color: #1a1a14; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.28); overflow: hidden; }',
+    '.head { padding: 8px 10px; cursor: grab; background: rgba(0,0,0,0.06); user-select: none; }',
     '.head:active { cursor: grabbing; }',
-    '.type { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.65; }',
-    '.title { font-size: 12px; font-weight: 650; flex: 1; line-height: 1.25; }',
-    '.body { padding: 6px 10px 10px; font-size: 11.5px; line-height: 1.4; opacity: 0.9; }',
-    '.imp { font-size: 10px; opacity: 0.5; padding: 0 10px 8px; }',
+    '.group-title { font-size: 12px; font-weight: 650; line-height: 1.25; }',
+    '.items { margin: 0; padding: 4px 10px 8px; list-style: none; }',
+    '.item { padding: 6px 0; border-top: 1px solid rgba(0,0,0,0.1); cursor: pointer; }',
+    '.item-title { font-size: 11.5px; font-weight: 650; line-height: 1.35; }',
+    '.item-snippet { margin-top: 2px; font-size: 11px; line-height: 1.35; opacity: 0.78; }',
   ].join('\n');
   shadow.appendChild(style);
 
@@ -47,12 +48,18 @@ window.mountPatchesStickyNotes = function mountPatchesStickyNotes(payload) {
     return node;
   }
 
-  function defaultPos(item, i) {
-    const target = document.querySelector('[data-patches-anchor="' + item.anchorIndex + '"]');
-    if (target) {
+  function anchorFor(index) {
+    return document.querySelector('[data-patches-anchor="' + index + '"]');
+  }
+
+  function defaultPos(group, i) {
+    const items = Array.isArray(group.items) ? group.items : [];
+    for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+      const target = anchorFor(items[itemIndex].anchorIndex);
+      if (!target) continue;
       const r = target.getBoundingClientRect();
       return {
-        x: Math.min(window.innerWidth - 236, Math.max(8, r.right + 8)),
+        x: Math.min(window.innerWidth - 276, Math.max(8, r.right + 8)),
         y: Math.min(window.innerHeight - 80, Math.max(8, r.top)),
       };
     }
@@ -60,7 +67,7 @@ window.mountPatchesStickyNotes = function mountPatchesStickyNotes(payload) {
   }
 
   function flashAnchor(index) {
-    const target = document.querySelector('[data-patches-anchor="' + index + '"]');
+    const target = anchorFor(index);
     if (!target) return;
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     const prev = target.style.outline;
@@ -68,23 +75,48 @@ window.mountPatchesStickyNotes = function mountPatchesStickyNotes(payload) {
     setTimeout(function () { target.style.outline = prev; }, 900);
   }
 
-  items.forEach(function (item, i) {
-    const id = item.id || ('n-' + item.anchorIndex + '-' + i);
+  const anchorResolution = [];
+  groups.forEach(function (group, groupIndex) {
+    const items = Array.isArray(group.items) ? group.items.slice() : [];
+    items.sort(function (a, b) { return (b.importance || 0) - (a.importance || 0); });
+    items.forEach(function (item, itemIndex) {
+      const found = Boolean(anchorFor(item.anchorIndex));
+      const resolution = {
+        groupIndex,
+        itemIndex,
+        anchorIndex: item.anchorIndex,
+        found,
+        title: item.title || '',
+      };
+      anchorResolution.push(resolution);
+      console.log('[patches:notes] anchor resolution', resolution);
+    });
+
+    const id = group.id || ('g-' + groupIndex);
     const saved = positions[id];
-    const pos = saved && Number.isFinite(saved.x) ? saved : defaultPos(item, i);
+    const pos = saved && Number.isFinite(saved.x) ? saved : defaultPos({ ...group, items }, groupIndex);
 
     const note = el('div', 'note');
     note.style.left = pos.x + 'px';
     note.style.top = pos.y + 'px';
 
     const head = el('div', 'head');
-    head.appendChild(el('span', 'type', item.type || 'note'));
-    head.appendChild(el('span', 'title', item.title || ''));
-    const body = el('div', 'body', item.snippet || '');
-    const imp = el('div', 'imp', 'Importance ' + (item.importance || ''));
+    head.appendChild(el('div', 'group-title', group.groupTitle || 'Notes'));
     note.appendChild(head);
-    note.appendChild(body);
-    note.appendChild(imp);
+
+    const list = el('ul', 'items');
+    items.forEach(function (item) {
+      const entry = el('li', 'item');
+      entry.appendChild(el('div', 'item-title', item.title || ''));
+      if (item.snippet) entry.appendChild(el('div', 'item-snippet', item.snippet));
+      entry.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        flashAnchor(item.anchorIndex);
+      });
+      list.appendChild(entry);
+    });
+    note.appendChild(list);
 
     let dragging = false;
     let moved = false;
@@ -119,13 +151,13 @@ window.mountPatchesStickyNotes = function mountPatchesStickyNotes(payload) {
       }
     });
 
-    note.addEventListener('click', function (e) {
-      if (moved) { moved = false; e.preventDefault(); return; }
-      flashAnchor(item.anchorIndex);
-    });
-
     layer.appendChild(note);
   });
 
-  return { ok: true, itemCount: items.length };
+  return {
+    ok: true,
+    itemCount: anchorResolution.length,
+    groupCount: groups.length,
+    anchorResolution,
+  };
 };

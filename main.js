@@ -528,11 +528,11 @@ async function runPageUnderstanding({ prompt, reason }) {
     recordPromptExtract(domain);
     pageNotesStore.setLastPrompt(domain, text);
     const positions = pageNotesStore.getPositions(domain);
-    const items = (extracted.items || []).map((item, i) => ({
-      ...item,
-      id: `n-${item.anchorIndex}-${i}`,
+    const groups = (extracted.groups || []).map((group, i) => ({
+      ...group,
+      id: `g-${i}`,
     }));
-    const payloadJson = JSON.stringify({ items, positions });
+    const payloadJson = JSON.stringify({ groups, positions });
     await injectPageHelpers();
     const mounted = await browserView.webContents.executeJavaScript(`
       (function() {
@@ -540,8 +540,7 @@ async function runPageUnderstanding({ prompt, reason }) {
           if (typeof window.mountPatchesStickyNotes !== 'function') {
             throw new Error('mountPatchesStickyNotes is not defined');
           }
-          window.mountPatchesStickyNotes(JSON.parse(${JSON.stringify(payloadJson)}));
-          return { ok: true };
+          return window.mountPatchesStickyNotes(JSON.parse(${JSON.stringify(payloadJson)}));
         } catch (e) {
           return {
             ok: false,
@@ -561,9 +560,17 @@ async function runPageUnderstanding({ prompt, reason }) {
       };
       throw err;
     }
+    console.log('[patches:notes] anchor resolution:', mounted.anchorResolution || []);
     notesPhase = 'idle';
-    emitNotesStatus({ itemCount: items.length, lastPrompt: text });
-    return { success: true, domain, itemCount: items.length, usedModel: extracted.usedModel };
+    emitNotesStatus({ itemCount: mounted.itemCount || 0, lastPrompt: text });
+    return {
+      success: true,
+      domain,
+      itemCount: mounted.itemCount || 0,
+      groupCount: groups.length,
+      anchorResolution: mounted.anchorResolution || [],
+      usedModel: extracted.usedModel,
+    };
   } catch (err) {
     notesPhase = 'error';
     const debug = notesDebugPayload(err, err.notesDebug || {});
