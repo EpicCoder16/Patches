@@ -80,13 +80,14 @@ const NAV_BAR_HEIGHT     = 48;
 // Must match #patches-panel width in renderer/style.css
 const PATCHES_PANEL_WIDTH = 300;
 let GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-// Default: current Gemini 2.5 Flash (v1beta). Older 1.5 IDs (e.g. gemini-1.5-flash-8b) 404 on many keys.
-let GEMINI_MODEL   = process.env.PATCHES_MODEL || 'gemini-2.5-flash';
+// Default: current stable Gemini 3.x Flash (v1beta). Shut-down IDs (e.g. gemini-2.0-flash) 404 on every
+// request; keep this list synced with https://ai.google.dev/gemini-api/docs/models
+let GEMINI_MODEL   = process.env.PATCHES_MODEL || 'gemini-3.8-flash';
 const SUPPORTED_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-  'gemini-2.0-flash',
-  'gemini-2.0-flash-lite',
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
 ];
 
 let mainWindow   = null;
@@ -315,10 +316,12 @@ function parseModelAspects(raw) {
 // Get a key at https://aistudio.google.com/apikey
 //
 // Models (set PATCHES_MODEL in .env to override) — use ListModels if one 404s for your key/region:
-//   gemini-2.5-flash          — default
-//   gemini-2.5-pro            — stronger / different quota pool
-//   gemini-2.0-flash          — Gemini 2 Flash
-//   gemini-2.0-flash-lite     — Gemini 2 Flash Lite
+//   gemini-3.8-flash          — default
+//   gemini-3.7-flash          — previous-generation Flash
+//   gemini-3.6-flash          — older Flash fallback
+//   gemini-3.5-flash-lite     — fastest / lightest fallback
+// NOTE: thinking models spend output tokens on reasoning. max_output_tokens covers thinking + answer,
+// so keep maxOutputTokens well above the JSON answer size or responses truncate (finishReason MAX_TOKENS).
 
 const SYSTEM_PROMPT = `You are an expert CSS engineer whose sole job is to write CSS patches for websites.
 
@@ -387,7 +390,7 @@ async function generateCSSFromPrompt(prompt, rawHTML, domain) {
     generationConfig: {
       temperature:     0.2,
       topP:            0.9,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 8192,
     },
   });
 
@@ -528,11 +531,14 @@ async function runPageUnderstanding({ prompt, reason }) {
     recordPromptExtract(domain);
     pageNotesStore.setLastPrompt(domain, text);
     const positions = pageNotesStore.getPositions(domain);
-    const items = (extracted.items || []).map((item, i) => ({
+    const group = extracted.group || { type: 'notes', title: text, items: extracted.items || [] };
+    const groupType = String(group.type || 'notes').slice(0, 80);
+    const groupTitle = String(group.title || text).slice(0, 120);
+    const items = (group.items || []).map((item, i) => ({
       ...item,
       id: `n-${item.anchorIndex}-${i}`,
     }));
-    const payloadJson = JSON.stringify({ items, positions });
+    const payloadJson = JSON.stringify({ type: groupType, title: groupTitle, items, positions });
     await injectPageHelpers();
     const mounted = await browserView.webContents.executeJavaScript(`
       (function() {
@@ -540,8 +546,11 @@ async function runPageUnderstanding({ prompt, reason }) {
           if (typeof window.mountPatchesStickyNotes !== 'function') {
             throw new Error('mountPatchesStickyNotes is not defined');
           }
-          window.mountPatchesStickyNotes(JSON.parse(${JSON.stringify(payloadJson)}));
-          return { ok: true };
+          const mountResult = window.mountPatchesStickyNotes(JSON.parse(${JSON.stringify(payloadJson)}));
+          return {
+            ok: true,
+            anchorAudit: mountResult && mountResult.anchorAudit ? mountResult.anchorAudit : null,
+          };
         } catch (e) {
           return {
             ok: false,
@@ -561,9 +570,34 @@ async function runPageUnderstanding({ prompt, reason }) {
       };
       throw err;
     }
+    // Render-time anchor audit: did each item's anchor element still exist in the
+    // live DOM when the note mounted? Diagnoses the notes-stack-at-top bug.
+    const anchorAudit = Array.isArray(mounted.anchorAudit) ? mounted.anchorAudit : [];
+    anchorAudit.forEach((row) => {
+      console.log(
+        `[patches:notes] anchor ${row.anchorIndex} (item "${row.itemText}"): ` +
+        `${row.found ? 'FOUND' : 'MISSING'} on page at render time`
+      );
+      if (!row.found) {
+        console.log(`[patches:notes]   anchor preview at extraction time: "${row.anchorPreview}"`);
+      }
+    });
+    const missingCount = anchorAudit.filter((row) => !row.found).length;
+    if (anchorAudit.length) {
+      console.log(
+        `[patches:notes] anchor resolution at render time: ` +
+        `${anchorAudit.length - missingCount}/${anchorAudit.length} found, ${missingCount} missing`
+      );
+    }
     notesPhase = 'idle';
     emitNotesStatus({ itemCount: items.length, lastPrompt: text });
-    return { success: true, domain, itemCount: items.length, usedModel: extracted.usedModel };
+    return {
+      success: true,
+      domain,
+      itemCount: items.length,
+      anchorsMissing: missingCount,
+      usedModel: extracted.usedModel,
+    };
   } catch (err) {
     notesPhase = 'error';
     const debug = notesDebugPayload(err, err.notesDebug || {});
@@ -834,6 +868,15 @@ ipcMain.handle('apply-patch', async (_, { prompt }) => {
       fallbackError: generated.fallbackError,
     };
   } catch (err) {
+    if (err.geminiModelUnavailable) {
+      return {
+        success: false,
+        geminiModelUnavailable: true,
+        error:
+          'The configured Gemini models were rejected as unavailable. Update the model list (see ai.google.dev/gemini-api/docs/models) and retry.',
+        errorDetail: err.geminiErrorDetail || err.message,
+      };
+    }
     if (err.geminiQuota) {
       return {
         success: false,

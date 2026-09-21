@@ -89,7 +89,7 @@ if (navNotesRefresh) {
       );
       showToast((result && result.error) || 'Could not refresh notes', 'error');
     } else {
-      showToast(`Updated ${result.itemCount || 0} notes`);
+      showToast(`Updated notes — ${result.itemCount || 0} items`);
     }
   });
 }
@@ -328,7 +328,7 @@ async function submitNotes(prompt) {
     const result = await window.patches.applyPageNotes({ prompt });
     if (result && result.success) {
       setStatusSuccess(prompt, `${result.itemCount || 0} notes`);
-      showToast(`Pinned ${result.itemCount || 0} notes on ${result.domain || 'this page'}`);
+      showToast(`Pinned a note with ${result.itemCount || 0} items on ${result.domain || 'this page'}`);
       setTimeout(() => closeCommandBar(), 1600);
       return;
     }

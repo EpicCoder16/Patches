@@ -40,17 +40,19 @@ Patches sends the key as an `x-goog-api-key` header (not a `?key=` query paramet
 
 ### Choose a model (optional)
 
-Default: `gemini-2.5-flash`. Older `gemini-1.5-*` IDs often return 404 on current `v1beta`; use the list below or call the API [ListModels](https://ai.google.dev/api/rest/v1beta/models/list) for your key.
+Default: `gemini-3.8-flash`. Shut-down IDs (e.g. `gemini-2.0-flash`, `gemini-2.0-flash-lite`) return 404 on every request, and deprecated 2.5 IDs 404 on many newer keys; use the list below or call the API [ListModels](https://ai.google.dev/api/rest/v1beta/models/list) for your key.
 
 ```bash
-export PATCHES_MODEL="gemini-2.0-flash-lite"
+export PATCHES_MODEL="gemini-3.8-flash"
 ```
 
 Supported in the app:
-- `gemini-2.5-flash`
-- `gemini-2.5-pro`
-- `gemini-2.0-flash`
-- `gemini-2.0-flash-lite`
+- `gemini-3.8-flash`
+- `gemini-3.7-flash`
+- `gemini-3.6-flash`
+- `gemini-3.5-flash-lite`
+
+Note: thinking models spend output tokens on reasoning, so the app sets `maxOutputTokens: 8192` — `max_output_tokens` covers thinking + answer, and small caps truncate responses (`finishReason: MAX_TOKENS`).
 
 ## Usage
 
@@ -71,7 +73,9 @@ Sign in first, then browse and patch sites.
 
 ### Page notes (prompt-driven)
 
-Use **Notes** (⌘⇧N) like **New patch**: type what you want pinned (e.g. “show popular videos”). Patches builds a redacted outline once, sends it **with your prompt** to Gemini, and overlays sticky notes. Refresh re-runs the last prompt. There is no background page reading. User-initiated notes are capped at 30 requests per domain per hour. Raw page text is not saved; note positions are stored locally.
+Use **Notes** (⌘⇧N) like **New patch**: type what you want pinned (e.g. “show popular videos”). Patches builds a redacted outline once, sends it **with your prompt** to Gemini, and overlays **one grouped sticky note** whose entries (title + snippet, sorted by importance) each keep their anchor — click an entry to scroll to that element on the page. Refresh re-runs the last prompt. There is no background page reading. User-initiated notes are capped at 30 requests per domain per hour. Raw page text is not saved; the group note's position is stored locally.
+
+Render-time anchor diagnostics: main.js logs `[patches:notes] anchor <n> …: FOUND/MISSING on page at render time` for every item, so if the target page re-renders between outline capture and the Gemini response (anchors gone), it's visible in the console.
 
 ### Color requests (“blues → reds”)
 
